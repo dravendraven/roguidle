@@ -176,14 +176,7 @@ function enterFloor(state, orders, events) {
     }
   }
 
-  state.floor = makeFloor(state.seed, state.depth, state.carried.greedStacks);
-  state.hero.x = state.floor.heroStart.x;
-  state.hero.y = state.floor.heroStart.y;
-  state.floorTicks = 0;
-  state.forceStairs = false;
-  state.path = null;
-  state.pathKey = null;
-  state.retreating = false;
+  placeOnFloor(state);
 
   const byType = {};
   let elites = 0;
@@ -192,6 +185,21 @@ function enterFloor(state, orders, events) {
     if (m.elite) elites++;
   }
   events.push(ev(state, 'floor_entered', { monsters: byType, elites }));
+}
+
+// Build the current depth's floor and stand the hero at its entrance. Split
+// out of enterFloor so a saved run can be resumed onto its floor WITHOUT
+// paying rations for it a second time (offline.js).
+export function placeOnFloor(state) {
+  state.floor = makeFloor(state.seed, state.depth, state.carried.greedStacks);
+  state.hero.x = state.floor.heroStart.x;
+  state.hero.y = state.floor.heroStart.y;
+  state.floorTicks = 0;
+  state.forceStairs = false;
+  state.path = null;
+  state.pathKey = null;
+  state.retreating = false;
+  state.restSession = null;
 }
 
 // Depth Renown: paid the first time a run passes each threshold, banked on
@@ -223,7 +231,16 @@ function bankNow(state, events) {
     state.renown += value; // banked value IS Renown (game-design.md)
     state.stats.banks++;
     events.push(
-      ev(state, 'banked', { gold: c.gold, chests: chestCount, stacks: c.greedStacks, mult, value })
+      ev(state, 'banked', {
+        gold: c.gold,
+        chests: chestCount,
+        // tiers travel with the event so the chest queue can be rebuilt from
+        // events alone — banking is what sends a chest home to be opened
+        tiers: { ...c.chests },
+        stacks: c.greedStacks,
+        mult,
+        value,
+      })
     );
   }
   c.gold = 0;

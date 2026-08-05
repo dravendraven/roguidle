@@ -3,7 +3,7 @@
 // the account seed is supplied by the caller (main.js).
 import { BALANCE } from '../sim/balance.js';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 // DESIGN GAPS (flagged, not decided — see CLAUDE.md):
 // - No default doctrine is specified anywhere in the docs. Using 'greedy',
@@ -34,6 +34,12 @@ export function newSave(now, accountSeed) {
       standingOrder: DEFAULTS.standingOrder,
       deaths: 0,
       maxFloor: 1,
+      // Determinism has to survive closing the tab: the generator's position
+      // and the run's once-only bookkeeping are part of the save, not just
+      // of the session. null means "start the stream fresh".
+      rngState: null,
+      depthRenownPaid: [],
+      shrinesSinceBank: 0,
     },
     meta: {
       embers: 0,
@@ -53,8 +59,15 @@ export function newSave(now, accountSeed) {
 // Ordered migrations: index i upgrades a save at version i+1 to version i+2.
 // Never change the save format without adding one (CLAUDE.md).
 export const MIGRATIONS = [
-  // Example for the next format change:
-  // (save) => { save.hero.newField = 0; return save; },
+  // 1 -> 2: offline resolution needs the rng position and the run's
+  // once-only bookkeeping to persist, or a resumed run re-rolls its combat
+  // and re-earns its depth Renown on every catch-up.
+  (save) => {
+    save.run.rngState = null;
+    save.run.depthRenownPaid = [];
+    save.run.shrinesSinceBank = 0;
+    return save;
+  },
 ];
 
 export function migrate(save) {
@@ -65,6 +78,28 @@ export function migrate(save) {
     save = step(save);
     v += 1;
     save.version = v;
+  }
+  return save;
+}
+
+export const CHRONICLE_LIMIT = 200;
+
+// Fold simulation events into the save: the chronicle keeps the tail, and
+// banking a chest is what sends it home to be opened. Chest CONTENTS are not
+// rolled here — that happens on tap, at login (game-design.md).
+export function absorbEvents(save, events) {
+  for (const e of events) {
+    if (e.type === 'banked' && e.tiers) {
+      for (const [tier, count] of Object.entries(e.tiers)) {
+        for (let i = 0; i < count; i++) {
+          save.pendingChests.push({ tier, seedAt: e.t, source: 'floor ' + e.depth });
+        }
+      }
+    }
+    save.chronicle.push(e);
+  }
+  if (save.chronicle.length > CHRONICLE_LIMIT) {
+    save.chronicle = save.chronicle.slice(-CHRONICLE_LIMIT);
   }
   return save;
 }

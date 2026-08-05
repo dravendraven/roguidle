@@ -69,3 +69,6 @@ button.danger { border-color: #6b3b3b; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .loading { color: #8891a6; }
+
+.line { margin: 0 0 6px; }
+.line:last-child { margin-bottom: 0; }

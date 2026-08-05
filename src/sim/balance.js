@@ -92,4 +92,10 @@ export const BALANCE = {
     max_ticks_per_floor: 800,
     tick_ms_watchable: 400,
   },
+
+  offline: {
+    minutes_per_floor: 120,
+    max_hours: 24,
+    camp_rations_per_hour: 1.0,
+  },
 };

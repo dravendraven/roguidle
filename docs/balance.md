@@ -325,6 +325,25 @@ tick_ms_watchable: 400
 offline_resolution: per-floor aggregate (see tech-design 4.1)
 max_offline_hours_uncapped_by_larder: 24
 
+offline_minutes_per_floor: 120 // INITIAL GUESS — NEW value, required to build
+// P1 at all, not a retune of a frozen one. Derived from the stated target
+// "24h offline on a full early-game larder: rations run out around hour
+// 14-18": a 12-ration larder at greedy's 1.5/floor is 8 floors, and 8 floors
+// x 2h lands at 16h, inside the band. Swift stretches to ~30h, Cautious ~12h.
+// NOTE: this makes offline advance ~130x slower than watchable mode would at
+// 400ms/tick. tech-design section 9 already waves off tab-open advantage in a
+// client-only game, but the two rates should be reconciled before P2 ships
+// the watchable view.
+
+camp_rations_per_hour: 1.0 // INITIAL GUESS — OWNER DECISION NEEDED.
+// The docs say the hero "camps and waits" at zero rations and that this is
+// never a punishment, but nothing anywhere says how rations come BACK. With
+// no answer, a P1 account delves ~8 floors and then stops forever, which is
+// simply not playable. Simplest reading that respects the docs: waiting in
+// camp is foraging, so rations tick back up to the larder cap and delving
+// resumes. Replace this with the real mechanic when you decide it (loot? a
+// camp building? a daily reset? all are currently out of MVP scope).
+
 ## Observed, retune after P1
 
 Things noticed while building, deliberately NOT acted on during the balance
