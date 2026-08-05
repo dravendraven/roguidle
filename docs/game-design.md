@@ -1,4 +1,4 @@
-# Idle Rogule — Game Design (MVP)
+# Roguidle — Game Design (MVP)
 
 Companion doc to tech-design.md. This is WHAT the game is; the tech design is HOW.
 When a build question is really a design question, answer it from here or ask the owner.

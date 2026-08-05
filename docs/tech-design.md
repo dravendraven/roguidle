@@ -1,6 +1,6 @@
-# Idle Rogule — Tech Design (MVP)
+# Roguidle — Tech Design (MVP)
 
-Working title: **Rogule: Descent**. An idle companion to Rogule: the hero delves an endless emoji dungeon on its own, the player logs in daily to open chests, make three decisions, and run the shared daily seed.
+Working title: **Roguidle**. An idle companion to Rogule: the hero delves an endless emoji dungeon on its own, the player logs in daily to open chests, make three decisions, and run the shared daily seed.
 
 This document targets a solo builder with basic coding knowledge, working with AI assistance, deploying to GitHub Pages. Every technical choice below is filtered through that constraint: no build tools, no server, no accounts, nothing that needs babysitting.
 
@@ -27,7 +27,7 @@ Storage is `localStorage` with a versioned JSON save, plus an export/import feat
 ## 3. Repository layout
 
 ```
-idle-rogule/
+roguidle/
   index.html          entry point, loads everything
   style.css
   src/
