@@ -16,6 +16,11 @@ they seem easy or are mentioned in the docs.
 
 **Current phase: P0** (update this line manually as phases complete)
 
+To run the sim: `python tools/dev-server.py` then open
+http://localhost:8137/run-sim.html — that server disables browser caching, so
+edits to src/sim/*.js actually take effect. Opening the file directly will not
+work (ES modules need http://).
+
 ## Hard rules
 - Vanilla JavaScript, ES modules. No frameworks, no npm, no build step,
   no TypeScript. Must run by opening HTML files / GitHub Pages as-is.
