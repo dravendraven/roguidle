@@ -3,6 +3,7 @@
 // clock, the DOM and storage.
 import { loadOrCreate, save as writeSave, saveUnlessChangedExternally, clear } from './storage.js';
 import { absorbEvents, resetRun } from './game/state.js';
+import { rollChestOptions, describeGear, equipmentBonuses, SLOTS } from './game/gear.js';
 import { fastForward, runFromSave, applyRunToSave, runSeedFor, atFloorBoundary } from './sim/offline.js';
 import { makeRng } from './sim/rng.js';
 import { tick } from './sim/tick.js';
@@ -19,6 +20,7 @@ let feed = [];         // recent event lines
 let screen = 'camp';
 let lastPersistedDepth = 0;
 let arrival = null;    // what happened while away, for the camp screen
+let openChest = null;  // the chest whose three choices are on screen
 
 function boot() {
   const now = Date.now();
@@ -101,11 +103,17 @@ function step() {
   const orders = { doctrine: state.run.doctrine, autoBankEvery: state.run.standingOrder };
   const out = tick(run, orders, rng);
 
+  // Fold into the save as they happen, or a boss chest won while watching
+  // would never reach the pending queue.
+  absorbEvents(state, out.events);
+  let gotChest = false;
   for (const e of out.events) {
+    if (e.type === 'boss_killed') gotChest = true;
     const line = eventLine(e);
     if (line) feed.push(line);
   }
   if (feed.length > 40) feed = feed.slice(-40);
+  if (gotChest) writeSave(state); // a reward is worth an immediate write
 
   // Persist ONLY at floor boundaries. A floor regenerates from its seed, so
   // saving mid-floor and reloading would hand out its gold a second time.
@@ -200,6 +208,71 @@ function render() {
   paintCamp();
 }
 
+/* ---- gear ------------------------------------------------------------- */
+
+const SLOT_LABEL = { weapon: 'Weapon', armor: 'Armor', relic: 'Relic' };
+const SLOT_BLANK = { weapon: '🗡️', armor: '🛡️', relic: '🔮' };
+
+function equipmentPanel() {
+  const eq = state.hero.equipment || {};
+  return `<div class="slots">${SLOTS.map((slot) => {
+    const it = eq[slot];
+    return `<div class="slot${it ? '' : ' empty'}">
+      <div class="face">${it ? it.emoji : SLOT_BLANK[slot]}</div>
+      <div class="nm">${it ? it.name : SLOT_LABEL[slot]}</div>
+      <div class="fx">${it ? describeGear(it) : '—'}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function chestPanel() {
+  const chest = state.pendingChests[0];
+  if (!chest) return '';
+  if (!openChest) {
+    return `<div class="card"><h2>Reward chest</h2>
+      <p class="line">A boss chest is waiting${state.pendingChests.length > 1
+        ? ` (${state.pendingChests.length} in all)` : ''}.</p>
+      <button id="openchest" class="primary wide">🎁 Open it</button></div>`;
+  }
+  const gold = state.hero.carried.gold;
+  const opts = rollChestOptions(openChest, openChest.depth || state.hero.floor);
+  return `<div class="card"><h2>Choose one — you have ${gold} 🪙</h2>
+    ${opts.map((o, i) => {
+      const afford = gold >= o.cost;
+      return `<button class="choice" data-i="${i}" ${afford ? '' : 'disabled'}>
+        <div class="big">${o.emoji} ${o.name}</div>
+        <div class="why">${SLOT_LABEL[o.slot]} — ${o.blurb}</div>
+        <div class="fx">${describeGear(o)}</div>
+        <div class="cost">${afford ? '' : 'need '}${o.cost} 🪙</div>
+      </button>`;
+    }).join('')}
+    <button id="skipchest">Take nothing</button></div>`;
+}
+
+function chooseGear(index) {
+  const chest = openChest;
+  if (!chest) return;
+  const opts = rollChestOptions(chest, chest.depth || state.hero.floor);
+  const item = opts[index];
+  if (!item || state.hero.carried.gold < item.cost) return;
+
+  state.hero.carried.gold -= item.cost;
+  state.hero.equipment[item.slot] = item;
+  // A bigger max hp from armour should arrive as usable health, not as an
+  // empty gap in the bar.
+  if (item.hp) state.hero.hp += item.hp;
+  finishChest();
+}
+
+function finishChest() {
+  state.pendingChests.shift();
+  openChest = null;
+  writeSave(state);
+  render();
+}
+
+/* ---- camp -------------------------------------------------------------- */
+
 function paintCamp() {
   const h = state.hero;
   const maxRations = BALANCE.hero.start_rations;
@@ -211,35 +284,32 @@ function paintCamp() {
 
     ${arrival && arrival.events ? awayReport(arrival.events, arrival.report) : ''}
 
+    <div class="res">
+      <span>🌀 floor <b>${h.floor}</b></span>
+      <span>❤️ <b>${h.hp}</b>/${h.maxHp + equipmentBonuses(h.equipment).hp}</span>
+      <span>🍖 <b>${h.rations}</b></span>
+      <span>🪙 <b>${h.carried.gold}</b></span>
+    </div>
+
+    ${chestPanel()}
+
     ${backlog > 0 ? `<div class="card"><h2>Waiting to be delved</h2>
       <p class="line"><b>${backlog}</b> floor${backlog === 1 ? '' : 's'} of delving has been earned while you were away.
-      Watch it happen, or settle it instantly — the hero ends up in exactly the same place either way.</p></div>` : ''}
+      Watch it happen, or settle it instantly — the hero ends up in the same place either way.</p></div>` : ''}
 
-    <button id="watch" class="primary wide">▶ Watch the descent${backlog > 0 ? ` (${backlog} floor${backlog === 1 ? '' : 's'} ready)` : ''}</button>
+    <button id="watch" class="primary wide">▶ Watch the descent${backlog > 0 ? ` (${backlog} ready)` : ''}</button>
     ${backlog > 0 ? '<button id="catchup" class="wide">⏩ Settle it instantly</button>' : ''}
 
     <div class="card">
-      <h2>The hero</h2>
-      <div class="stat"><span class="label">Floor</span><span class="value">${h.floor}</span></div>
+      <h2>Equipment</h2>
+      ${equipmentPanel()}
+    </div>
+
+    <div class="card">
+      <h2>Hero</h2>
       <div class="stat"><span class="label">Level</span><span class="value">${h.level}</span></div>
-      <div class="stat"><span class="label">Health</span><span class="value">${h.hp} / ${h.maxHp}</span></div>
-      <div class="bar hp"><span style="width:${pct(h.hp, h.maxHp)}%"></span></div>
-      <div class="stat"><span class="label">Rations</span><span class="value">${h.rations}</span></div>
+      <div class="bar hp"><span style="width:${pct(h.hp, h.maxHp + equipmentBonuses(h.equipment).hp)}%"></span></div>
       <div class="bar rations"><span style="width:${pct(h.rations, maxRations)}%"></span></div>
-    </div>
-
-    <div class="card">
-      <h2>Pack</h2>
-      <div class="stat"><span class="label">Gold carried</span><span class="value">${h.carried.gold} 🪙</span></div>
-      <div class="stat"><span class="label">Greed stacks</span><span class="value">${h.carried.greedStacks}</span></div>
-      <div class="stat"><span class="label">Chests waiting</span><span class="value">${state.pendingChests.length}</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Account</h2>
-      <div class="stat"><span class="label">Run</span><span class="value">#${state.run.number}</span></div>
-      <div class="stat"><span class="label">Doctrine</span><span class="value">${state.run.doctrine}</span></div>
-      <div class="stat"><span class="label">Renown</span><span class="value">${Math.round(state.meta.renown)}</span></div>
       <div class="stat"><span class="label">Deepest ever</span><span class="value">floor ${state.meta.maxDepthEver}</span></div>
       <div class="stat"><span class="label">Deaths</span><span class="value">${state.run.deaths}</span></div>
     </div>
@@ -253,6 +323,14 @@ function paintCamp() {
   document.getElementById('watch').addEventListener('click', beginWatching);
   const catchup = document.getElementById('catchup');
   if (catchup) catchup.addEventListener('click', catchUpNow);
+
+  const open = document.getElementById('openchest');
+  if (open) open.addEventListener('click', () => { openChest = state.pendingChests[0]; render(); });
+  const skipChest = document.getElementById('skipchest');
+  if (skipChest) skipChest.addEventListener('click', finishChest);
+  for (const btn of document.querySelectorAll('.choice')) {
+    btn.addEventListener('click', () => chooseGear(Number(btn.dataset.i)));
+  }
   document.getElementById('skip').addEventListener('click', () => {
     state.lastSeenAt -= 4 * 3600000;
     writeSave(state);
@@ -288,6 +366,7 @@ function paintDescent(notice) {
       <span class="hud-item">❤️ <b>${h.hp}</b>/${h.maxHp}</span>
       <span class="hud-item">🍖 <b>${h.rations}</b></span>
       <span class="hud-item">🪙 <b>${carried.gold}</b></span>
+      ${state.pendingChests.length ? `<span class="hud-item">🎁 <b>${state.pendingChests.length}</b></span>` : ''}
     </div>
 
     ${notice ? `<p class="notice">${notice}</p>` : ''}

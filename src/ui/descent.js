@@ -17,6 +17,13 @@ const VIEW_H = 11;
 
 const key = (x, y) => x + ',' + y;
 
+// A health bar sits above every living thing on the grid, so you can watch a
+// creature die rather than just watching it vanish.
+function bar(hp, maxHp, cls) {
+  const w = Math.max(0, Math.min(100, (hp / (maxHp || 1)) * 100));
+  return `<i class="hpbar ${cls}"><b style="width:${w}%"></b></i>`;
+}
+
 export function renderFloor(run) {
   if (!run || !run.floor) return '<div class="grid-empty">the hero is between floors…</div>';
   const f = run.floor;
@@ -44,12 +51,14 @@ export function renderFloor(run) {
         continue;
       }
       if (hero.x === x && hero.y === y) {
-        cells += `<span class="t hero">${HERO}</span>`;
+        cells += `<span class="t hero">${bar(hero.hp, hero.maxHp, 'me')}${HERO}</span>`;
         continue;
       }
       const m = monsterAt.get(k);
       if (m) {
-        cells += `<span class="t mon${m.elite ? ' elite' : ''}">${MONSTER_EMOJI[m.type] || '❓'}</span>`;
+        const face = m.boss ? m.emoji : MONSTER_EMOJI[m.type] || '❓';
+        const cls = m.boss ? ' boss' : m.elite ? ' elite' : '';
+        cells += `<span class="t mon${cls}">${bar(m.hp, m.maxHp, 'foe')}${face}</span>`;
         continue;
       }
       const c = chestAt.get(k);
@@ -82,6 +91,8 @@ export function eventLine(e) {
     }
     case 'monster_killed':
       return { text: `⚔️ ${e.elite ? '💢 elite ' : ''}${MONSTER_EMOJI[e.monster]} slain (+${e.xp}xp${e.gold ? ', +' + e.gold + '🪙' : ''})` };
+    case 'boss_killed':
+      return { cls: 'good', text: `👑 ${e.emoji} the floor boss falls! +${e.gold}🪙 and a reward chest` };
     case 'gold_found':
       return { text: `🪙 picked up ${e.amount} gold` };
     case 'chest_found':

@@ -29,6 +29,26 @@ export const BALANCE = {
 
   elite: { hp_mult: 3, atk_bonus: 1, xp_mult: 4, gold_mult: 3, spawn_rate: 0.04, min_depth: 4 },
 
+  // One small boss per floor, standing on the stairs. Killing it is the only
+  // way down, and it is what drops the reward chest.
+  boss: {
+    hp: (d) => 4 + Math.round(d * 1.5),
+    atk: (d) => Math.floor(d / 4),
+    def: (d) => Math.floor(d / 6),
+    xp: (d) => 5 + d * 2,
+    gold: (d) => [6 + d * 2, 12 + d * 3],
+    emoji: ['👹', '👺', '🧟', '🦂', '🐲'],
+  },
+
+  gear: {
+    // Every chest offers exactly one of each slot, so the choice IS the
+    // trade-off: tougher, deadlier, or richer.
+    cost: (d) => 8 + d * 4,
+    weapon: { atk: (d) => 1 + Math.floor(d / 6) },
+    armor: { def: (d) => 1 + Math.floor(d / 8), hp: (d) => 2 + Math.floor(d / 4) },
+    relic: { goldMult: (d) => 0.25 + Math.min(0.5, d * 0.03), rationSave: 0.15 },
+  },
+
   floors: {
     width: 32,
     height: 20,

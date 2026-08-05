@@ -197,6 +197,47 @@ chase_radius: 3  // monsters chase the hero within this range
 leash_radius: 8  // monsters give up beyond this from their spawn // INITIAL GUESS
 max_ticks_per_floor: 800 // failsafe: hero force-marches to stairs // INITIAL GUESS
 
+## Floor bosses and gear (owner decision 2026-08-05)
+
+New mechanics, not retunes of frozen values. Scope cut toward "simple and
+playable": one small boss per floor gates the stairs, and its chest is the
+only source of gear.
+
+boss_per_floor: // INITIAL GUESS
+  hp:  4 + round(depth * 1.5)
+  atk: floor(depth / 4)   // 0 on floors 1-3
+  def: floor(depth / 6)
+// First numbers tried were hp 6+2d / atk 1+floor(d/4) and every one of 120
+// test accounts died, 45 of them on floor 1 — the freeze's "unplayable" bar.
+// The first boss has to be beatable with NO gear, because its own chest is
+// where gear comes from.
+  xp:  5 + depth * 2
+  gold: 6 + depth*2 .. 12 + depth*3
+// The boss stands ON the stairs, so it blocks the way down physically rather
+// than by a rule. No extra gate needed in the tick.
+
+gear_cost: 8 + depth * 4 gold // INITIAL GUESS
+gear_weapon_atk:   1 + floor(depth / 6)
+gear_armor_def:    1 + floor(depth / 8)
+gear_armor_hp:     2 + floor(depth / 4)
+gear_relic_goldMult: 0.25 + min(0.5, depth * 0.03)
+gear_relic_rationSave: 0.15
+// Each chest offers exactly one weapon, one armor and one relic, so the
+// three-way choice IS the trade-off: damage, survivability, or resources.
+// Gear is bought with CARRIED gold, so dying still costs the purse.
+
+### Conflicts with the design docs, flagged not resolved
+
+- game-design.md says relics drop from Balrog wins and persist through
+  prestige forever, as the unique gear tier. Here "relic" is just the
+  resource-gathering slot filled from any boss chest. Cheap and playable now;
+  reconcile when prestige actually exists.
+- The three decisions (doctrine, bank-or-push, prestige) are still simulated
+  but no longer surfaced in the UI, so the pillar-2 loop is dormant. Auto-
+  banking is off, which is what lets carried gold accumulate enough to buy
+  gear. Renown now comes from depth alone.
+- Wardens at 10/20/30 are superseded for now by a boss on every floor.
+
 ## Shrines and greed
 
 shrine_every_n_floors: 3
@@ -368,6 +409,11 @@ was seen, and where the evidence is.
   next floor; it never buys progress. tick_ms_watchable is now only a
   playback speed, not a rate of advance. Both paths stop at one shared
   boundary (atFloorBoundary in offline.js) and are verified bit-identical.
+- Floor bosses land the first death around floor 4, well short of the
+  documented 6-12 band, and 17 of 120 accounts still die on floor 1. Playable,
+  not yet right. Revisit with the boss curve, not the monster tables.
+- With prestige unbuilt, death resets everything except the relic, so there is
+  no long-term progression arc yet. The kept relic is a stopgap.
 - Greedy is the Renown leader by a wide margin once a surviving run banks its
   pack. Worth re-checking after P1 whether pushing (greed stacks) is ever
   worth it versus banking every shrine.

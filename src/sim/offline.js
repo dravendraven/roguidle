@@ -15,6 +15,7 @@
 import { BALANCE } from './balance.js';
 import { initRun, tick, placeOnFloor } from './tick.js';
 import { makeRng, hashSeeds } from './rng.js';
+import { equipmentBonuses } from '../game/gear.js';
 
 export function runSeedFor(save) {
   return hashSeeds(save.accountSeed, save.run.number);
@@ -28,8 +29,14 @@ export function runFromSave(save) {
   const h = save.hero;
   run.doctrine = save.run.doctrine;
   run.depth = h.floor;
-  run.hero.hp = h.hp;
-  run.hero.maxHp = h.maxHp;
+  // Equipped gear is what the combat dice actually read.
+  const bonus = equipmentBonuses(h.equipment);
+  run.hero.weaponBonus = bonus.atk;
+  run.hero.armorBonus = bonus.def;
+  run.hero.goldMult = bonus.goldMult;
+  run.hero.rationSave = bonus.rationSave;
+  run.hero.maxHp = h.maxHp + bonus.hp;
+  run.hero.hp = Math.min(h.hp, run.hero.maxHp);
   run.hero.level = h.level;
   run.hero.xp = h.xp;
   run.hero.rations = h.rations;
@@ -48,8 +55,11 @@ export function runFromSave(save) {
 // Fold a run's state back into the save.
 export function applyRunToSave(save, run, rng) {
   const h = save.hero;
+  // Store the hero's OWN max hp. Gear is re-applied on every load, so saving
+  // the boosted figure would compound the armour bonus every session.
+  const bonus = equipmentBonuses(h.equipment);
   h.hp = run.hero.hp;
-  h.maxHp = run.hero.maxHp;
+  h.maxHp = run.hero.maxHp - bonus.hp;
   h.level = run.hero.level;
   h.xp = run.hero.xp;
   h.rations = run.hero.rations;

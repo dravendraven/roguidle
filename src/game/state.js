@@ -3,7 +3,7 @@
 // the account seed is supplied by the caller (main.js).
 import { BALANCE } from '../sim/balance.js';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 // DESIGN GAPS (flagged, not decided — see CLAUDE.md):
 // - No default doctrine is specified anywhere in the docs. Using 'greedy',
@@ -23,7 +23,7 @@ export function newSave(now, accountSeed) {
       maxHp: H.start_hp,
       level: 1,
       xp: 0,
-      gear: [],
+      equipment: { weapon: null, armor: null, relic: null },
       rations: H.start_rations,
       floor: 1, // the floor the hero is standing on, rations already paid
       carried: { gold: 0, chests: { common: 0, rare: 0, gilded: 0 }, greedStacks: 0 },
@@ -68,6 +68,13 @@ export const MIGRATIONS = [
     save.run.shrinesSinceBank = 0;
     return save;
   },
+  // 2 -> 3: gear became a real system with three slots. The old `gear: []`
+  // never held anything, so there is nothing to carry across.
+  (save) => {
+    delete save.hero.gear;
+    save.hero.equipment = { weapon: null, armor: null, relic: null };
+    return save;
+  },
 ];
 
 export function migrate(save) {
@@ -89,12 +96,10 @@ export const CHRONICLE_LIMIT = 200;
 // rolled here — that happens on tap, at login (game-design.md).
 export function absorbEvents(save, events) {
   for (const e of events) {
-    if (e.type === 'banked' && e.tiers) {
-      for (const [tier, count] of Object.entries(e.tiers)) {
-        for (let i = 0; i < count; i++) {
-          save.pendingChests.push({ tier, seedAt: e.t, source: 'floor ' + e.depth });
-        }
-      }
+    // Every boss drops a reward chest. It waits, sealed, until the player
+    // opens it by hand and picks one of three pieces of gear.
+    if (e.type === 'boss_killed') {
+      save.pendingChests.push({ tier: 'boss', seedAt: e.t + e.depth * 7919, depth: e.depth });
     }
     save.chronicle.push(e);
   }
@@ -108,7 +113,13 @@ export function absorbEvents(save, events) {
 export function resetRun(save, now) {
   const fresh = newSave(now, save.accountSeed);
   fresh.hero.rations = BALANCE.hero.start_rations;
+  // The relic survives; weapon and armour do not. game-design.md makes
+  // relics the permanent tier, and without prestige built yet this is the
+  // only thread of progress between runs. FLAGGED: the docs tie relic
+  // permanence to prestige, not to death.
+  const keptRelic = save.hero && save.hero.equipment ? save.hero.equipment.relic : null;
   save.hero = fresh.hero;
+  save.hero.equipment.relic = keptRelic || null;
   save.run = {
     ...fresh.run,
     number: save.run.number + 1,

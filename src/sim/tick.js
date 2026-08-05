@@ -24,8 +24,10 @@ export function initRun(seed) {
       maxHp: B.hero.start_hp,
       level: 1,
       xp: 0,
-      weaponBonus: 0, // gear arrives with P1 chests
+      weaponBonus: 0, // set from equipped gear by runFromSave
       armorBonus: 0,
+      goldMult: 1,
+      rationSave: 0,
       rations: B.hero.start_rations,
       x: 0,
       y: 0,
@@ -55,6 +57,7 @@ export function initRun(seed) {
       shrinesSeen: 0,
       banks: 0,
       depthRenown: 0,
+      bossKills: 0,
     },
   };
 }
@@ -125,7 +128,8 @@ export function tick(state, orders, rng) {
 // shrine floor, then generate the new floor.
 function enterFloor(state, orders, events) {
   const B = BALANCE;
-  const cost = B.hero.ration_cost_per_floor[state.doctrine];
+  const cost =
+    B.hero.ration_cost_per_floor[state.doctrine] * (1 - (state.hero.rationSave || 0));
   if (state.hero.rations < cost) {
     // Camping is not dying. Only DEATH loses what the hero carries
     // (game-design.md), so a hero who runs dry walks its haul home.
@@ -256,7 +260,7 @@ function doAttack(state, id, rng, events) {
   if (m.hp > 0) return;
 
   state.floor.monsters = state.floor.monsters.filter((mm) => mm.id !== id);
-  const gold = randInt(rng, m.goldMin, m.goldMax);
+  const gold = Math.round(randInt(rng, m.goldMin, m.goldMax) * (state.hero.goldMult || 1));
   state.carried.gold += gold;
   state.stats.goldCollected += gold;
   state.stats.kills++;
@@ -264,7 +268,15 @@ function doAttack(state, id, rng, events) {
   state.stats.killsByType[m.type] = (state.stats.killsByType[m.type] || 0) + 1;
   state.pathKey = null; // whatever we were walking to may have been this
   state.path = null;
-  events.push(ev(state, 'monster_killed', { monster: m.type, elite: m.elite, xp: m.xp, gold }));
+
+  if (m.boss) {
+    state.stats.bossKills++;
+    // The boss chest is the game's only source of gear. Contents still roll
+    // on tap, not here — the login reveal stays the player's moment.
+    events.push(ev(state, 'boss_killed', { emoji: m.emoji, xp: m.xp, gold }));
+  } else {
+    events.push(ev(state, 'monster_killed', { monster: m.type, elite: m.elite, xp: m.xp, gold }));
+  }
   gainXp(state, m.xp, events);
 }
 
@@ -293,9 +305,10 @@ function doPickup(state, events) {
   const pile = floor.piles.find((p) => p.x === hero.x && p.y === hero.y);
   if (pile) {
     floor.piles = floor.piles.filter((p) => p !== pile);
-    state.carried.gold += pile.amount;
-    state.stats.goldCollected += pile.amount;
-    events.push(ev(state, 'gold_found', { amount: pile.amount }));
+    const amount = Math.round(pile.amount * (state.hero.goldMult || 1));
+    state.carried.gold += amount;
+    state.stats.goldCollected += amount;
+    events.push(ev(state, 'gold_found', { amount }));
   }
 }
 

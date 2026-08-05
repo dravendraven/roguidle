@@ -172,6 +172,29 @@ export function makeFloor(runSeed, depth, greedStacks) {
     monsters.push(m);
   }
 
+  // The floor's boss stands on the stairs. It blocks the way down by simply
+  // being there — no separate "stairs locked" rule to keep in sync.
+  const bossDepthEmoji = B.boss.emoji[Math.min(B.boss.emoji.length - 1, Math.floor((depth - 1) / 4))];
+  const boss = {
+    id: 9000,
+    type: 'boss',
+    boss: true,
+    elite: false,
+    emoji: bossDepthEmoji,
+    hp: B.boss.hp(depth),
+    atk: B.boss.atk(depth),
+    def: B.boss.def(depth),
+    xp: B.boss.xp(depth),
+    goldMin: B.boss.gold(depth)[0],
+    goldMax: B.boss.gold(depth)[1],
+    x: stairs.x,
+    y: stairs.y,
+    spawnX: stairs.x,
+    spawnY: stairs.y,
+  };
+  boss.maxHp = boss.hp;
+  monsters.push(boss);
+
   // Chest PRESENCE only — contents never roll in the sim (login reveal).
   // Gilded tier requires carrying enough greed stacks (risk-gated quality).
   const chests = [];

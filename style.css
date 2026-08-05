@@ -103,6 +103,19 @@ button.danger { border-color: #6b3b3b; }
   line-height: 1;
   border-radius: 3px;
 }
+.grid .t { position: relative; }
+.hpbar {
+  position: absolute;
+  top: 1px; left: 12%;
+  width: 76%; height: 3px;
+  background: #000;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.hpbar > b { display: block; height: 100%; background: #c2554f; }
+.hpbar.me > b { background: #5fb36a; }
+.grid .boss { background: #4a2630; }
+.grid .boss .hpbar { height: 4px; }
 .grid .wall { background: #191c24; }
 .grid .floor { color: #333a48; }
 .grid .hero { background: #26324a; }
@@ -127,3 +140,32 @@ button.wide { width: 100%; margin-bottom: 14px; }
 button.ghost { background: none; border-color: #2b303c; padding: 6px 12px; min-height: 36px; }
 button:disabled { opacity: 0.45; cursor: default; }
 .sub.small { font-size: 13px; margin: 0; align-self: center; }
+
+/* resources strip */
+.res {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  background: #1a1e26; border: 1px solid #2b303c; border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* equipment */
+.slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.slot {
+  background: #1a1e26; border: 1px solid #2b303c; border-radius: 10px;
+  padding: 10px 8px; text-align: center;
+}
+.slot .face { font-size: 26px; line-height: 1.3; }
+.slot .nm { font-size: 12px; color: #9aa3b8; }
+.slot .fx { font-size: 12px; color: #86c78a; }
+.slot.empty .face { opacity: 0.25; }
+
+/* chest choices */
+.choice {
+  display: block; width: 100%; text-align: left;
+  margin-bottom: 10px; padding: 12px 14px;
+}
+.choice .big { font-size: 17px; font-weight: 600; }
+.choice .why { color: #9aa3b8; font-size: 13px; }
+.choice .fx { color: #86c78a; font-size: 13px; }
+.choice[disabled] .cost { color: #e08585; }
