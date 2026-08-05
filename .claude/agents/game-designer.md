@@ -24,9 +24,8 @@ The four pillars, in priority order:
 3. Risk must overpay: safe play has a hard ceiling; the best rewards only
    exist in risky states. "Low risk, just slower" must never be optimal.
    P0 empirically confirmed this failure mode appears fast when unguarded.
-4. Absence is never punished: not logging in costs potential (unopened
-   chests, unequipped gear), never accumulated progress. No decay, no
-   required taps to resume, no power-granting streaks.
+4. The login is a moment: rare outcomes resolve in the player's hands
+   (tap-to-open chests), never silently in a log.
 
 Core principles established through playtesting and review:
 - Rations are TIME, not food. More ticks per floor = more rations per
@@ -42,6 +41,10 @@ Core principles established through playtesting and review:
   drop rare, Balrog wins drop uniques (relics). Chests are the delivery
   mechanism for offline findings, not a loot tier; contents roll at tap
   time, never during offline simulation.
+- Absence is never punished: not logging in costs potential (unopened
+  chests, unequipped gear), never accumulated progress. No decay, no
+  required taps to resume, no power-granting streaks. This is a standing
+  rule from the Tone section, not one of the four pillars.
 - Prestige separates run economy (gold, common/rare gear, one kept piece)
   from account (Embers, bestiary, uniques, Lifetime Renown). Runs target
   1-2 weeks held constant across cycles; depth grows, duration doesn't.
@@ -58,8 +61,17 @@ Active watchlist (check these against any new batch results):
   runs, an unreadable loss is a quit moment.
 
 Open questions (do not let code silently decide these):
-- Daily Gate hero: actual Descent hero vs standardized daily hero.
-  Decide during P2, prototype both if cheap.
+- Balrog loss penalty: game-design.md says soften the loss rather than
+  easing the fight, but names no number, and balance.md has no Balrog
+  block at all — no stats, no payout, no loss figure.
+- Relic sources: game-design.md gives relics published per-relic sources
+  (Everflame from the floor-20 area, Fang of the First Wolf from wolf
+  elites) AND says they drop from Balrog wins. Both statements are in the
+  doc. Resolve before P3 rather than letting a drop table decide it.
+
+Settled, do not reopen: the Daily Gate runs the actual Descent hero with
+the current doctrine (game-design.md, Daily Gate). Earlier drafts left
+this open as a P2 prototype; the doc closed it.
 
 When reviewing batch results: ask for Renown per doctrine, death rates,
 depth distributions, and stop-rule fire rates. Judge against the tuning
