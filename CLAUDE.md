@@ -1,4 +1,4 @@
-# Idle Rogule (Rogule: Descent)
+# Roguidle
 
 An idle roguelike inspired by rogule.com. The hero delves an emoji dungeon
 by itself; the player makes a few high-impact decisions daily.
