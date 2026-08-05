@@ -216,14 +216,27 @@ boss_per_floor: // INITIAL GUESS
 // The boss stands ON the stairs, so it blocks the way down physically rather
 // than by a rule. No extra gate needed in the tick.
 
-gear_cost: 8 + depth * 4 gold // INITIAL GUESS
-gear_weapon_atk:   1 + floor(depth / 6)
-gear_armor_def:    1 + floor(depth / 8)
-gear_armor_hp:     2 + floor(depth / 4)
-gear_relic_goldMult: 0.25 + min(0.5, depth * 0.03)
-gear_relic_rationSave: 0.15
-// Each chest offers exactly one weapon, one armor and one relic, so the
-// three-way choice IS the trade-off: damage, survivability, or resources.
+floor_gold_yield: 16 + 3.3 * depth
+// MEASURED, not a guess: average gold collected on one floor (monster drops
+// + piles + boss gold), 260 greedy runs per depth 1-7. Depth 1: ~19, depth
+// 7: ~42. Reprice the tiers if spawns or gold drops ever change.
+
+gear_tiers (owner decision 2026-08-05): every chest offers three TIERS, each
+a random slot, priced off floor_gold_yield so the economy tracks what a
+floor actually pays:
+  cheap:  0.6 x yield — buyable from this floor's takings with change left
+  mid:    1.0 x yield — about one whole floor's takings
+  rich:   1.9 x yield — only reachable by saving across floors
+// The save-or-spend decision this creates is the bank-or-push trade-off in
+// miniature: spending now is safe, walking gold past a boss to afford the
+// prized tier risks losing it to a death.
+
+gear_stats_by_tier (t = 0 cheap, 1 mid, 2 rich): // INITIAL GUESS
+  weapon_atk: 1 + t + floor(depth / (8 - 2t))
+  armor_def:  1 + t + floor(depth / 8)
+  armor_hp:   2 + 2t + floor(depth / 4)
+  relic_gold: 10% / 20% / 35%
+  relic_ration: 5% / 10% / 20%
 // Gear is bought with CARRIED gold, so dying still costs the purse.
 
 ### Conflicts with the design docs, flagged not resolved

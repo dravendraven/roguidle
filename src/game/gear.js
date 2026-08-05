@@ -14,42 +14,34 @@ const WEAPON_EMOJI = ['🗡️', '⚔️', '🪓', '🔪'];
 const ARMOR_EMOJI = ['🛡️', '🥼', '🦺', '⛓️'];
 const RELIC_EMOJI = ['💰', '🔮', '🧭', '🪙'];
 
-// The three options a chest offers: one per slot, so choosing a slot IS
-// choosing between damage, survivability and resources.
+// The three options a chest offers: one per PRICE TIER — cheap, mid, and a
+// prized piece that needs gold saved across floors. Each tier rolls its own
+// slot, so the choice is both "how much do I spend" and "what do I become".
 export function rollChestOptions(chest, depth) {
   const G = BALANCE.gear;
   const d = Math.max(1, depth);
   const rng = makeRng(hashSeeds(chest.seedAt || 1, d));
-  const cost = G.cost(d);
+  const yieldHere = G.floor_yield(d);
 
-  return [
-    {
-      slot: 'weapon',
-      name: pick(rng, WEAPON_NAMES),
-      emoji: pick(rng, WEAPON_EMOJI),
-      cost,
-      atk: G.weapon.atk(d),
-      blurb: 'hits harder',
-    },
-    {
-      slot: 'armor',
-      name: pick(rng, ARMOR_NAMES),
-      emoji: pick(rng, ARMOR_EMOJI),
-      cost,
-      def: G.armor.def(d),
-      hp: G.armor.hp(d),
-      blurb: 'survives longer',
-    },
-    {
-      slot: 'relic',
-      name: pick(rng, RELIC_NAMES),
-      emoji: pick(rng, RELIC_EMOJI),
-      cost,
-      goldMult: G.relic.goldMult(d),
-      rationSave: G.relic.rationSave,
-      blurb: 'gathers more',
-    },
-  ];
+  return G.tiers.map((tier, t) => {
+    const slot = pick(rng, SLOTS);
+    const base = {
+      slot,
+      tier: tier.key,
+      tierLabel: tier.label,
+      cost: Math.round(yieldHere * tier.cost_mult),
+    };
+    if (slot === 'weapon') {
+      return { ...base, name: pick(rng, WEAPON_NAMES), emoji: pick(rng, WEAPON_EMOJI),
+        atk: G.weapon_atk(t, d), blurb: 'hits harder' };
+    }
+    if (slot === 'armor') {
+      return { ...base, name: pick(rng, ARMOR_NAMES), emoji: pick(rng, ARMOR_EMOJI),
+        def: G.armor_def(t, d), hp: G.armor_hp(t, d), blurb: 'survives longer' };
+    }
+    return { ...base, name: pick(rng, RELIC_NAMES), emoji: pick(rng, RELIC_EMOJI),
+      goldMult: G.relic_gold(t), rationSave: G.relic_ration(t), blurb: 'gathers more' };
+  });
 }
 
 export function describeGear(item) {

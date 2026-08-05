@@ -41,12 +41,24 @@ export const BALANCE = {
   },
 
   gear: {
-    // Every chest offers exactly one of each slot, so the choice IS the
-    // trade-off: tougher, deadlier, or richer.
-    cost: (d) => 8 + d * 4,
-    weapon: { atk: (d) => 1 + Math.floor(d / 6) },
-    armor: { def: (d) => 1 + Math.floor(d / 8), hp: (d) => 2 + Math.floor(d / 4) },
-    relic: { goldMult: (d) => 0.25 + Math.min(0.5, d * 0.03), rationSave: 0.15 },
+    // Measured average gold collected on one floor (monsters + piles + boss),
+    // 260 runs per depth. Tier prices hang off this so the economy tracks
+    // what a floor actually pays, not a guess.
+    floor_yield: (d) => 16 + 3.3 * d,
+    // cheap: affordable from this floor with change left over.
+    // mid: about one floor's whole takings.
+    // rich: only reachable by saving across floors.
+    tiers: [
+      { key: 'cheap', label: 'Cheap', cost_mult: 0.6 },
+      { key: 'mid', label: 'Solid', cost_mult: 1.0 },
+      { key: 'rich', label: 'Prized', cost_mult: 1.9 },
+    ],
+    // Stats by tier index (0 cheap, 1 mid, 2 rich), scaling gently with depth.
+    weapon_atk: (t, d) => 1 + t + Math.floor(d / (8 - 2 * t)),
+    armor_def: (t, d) => 1 + t + Math.floor(d / 8),
+    armor_hp: (t, d) => 2 + t * 2 + Math.floor(d / 4),
+    relic_gold: (t) => [0.1, 0.2, 0.35][t],
+    relic_ration: (t) => [0.05, 0.1, 0.2][t],
   },
 
   floors: {

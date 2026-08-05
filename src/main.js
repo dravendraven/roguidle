@@ -1,4 +1,4 @@
-// Boot, screen routing, and the watchable tick loop.
+// Boot and the one game screen: grid, resources, chest, equipment.
 // Outside src/sim and src/game, so this is the layer allowed to touch the
 // clock, the DOM and storage.
 import { loadOrCreate, save as writeSave, saveUnlessChangedExternally, clear } from './storage.js';
@@ -13,32 +13,25 @@ import { renderFloor, eventLine } from './ui/descent.js';
 const app = document.getElementById('app');
 
 let state = null;      // the save
-let run = null;        // the live simulation run, only while watching
+let run = null;        // the live simulation run
 let rng = null;
 let timer = null;
-let feed = [];         // recent event lines
-let screen = 'camp';
-let lastPersistedDepth = 0;
-let arrival = null;    // what happened while away, for the camp screen
-let openChest = null;  // the chest whose three choices are on screen
+let feed = [];
+let openChest = null;  // the chest whose three tiers are on screen
+let awayLine = '';     // one-line summary of the catch-up
+
+const floorCostMs = () => BALANCE.offline.minutes_per_floor * 60000;
+const earnedMs = () => Date.now() - state.lastSeenAt;
 
 function boot() {
   const now = Date.now();
   // Seed minted here, not in src/game, because Math.random() is banned there.
   const seed = (now ^ (now >>> 9) ^ 0x9e3779b9) >>> 0;
-  const { state: loaded, fresh } = loadOrCreate(now, seed);
+  const { state: loaded } = loadOrCreate(now, seed);
   state = loaded;
 
-  // Deliberately NOT resolved on boot. Time earned while away is a backlog
-  // the player can either watch happen or settle instantly — the sim is
-  // deterministic and floor-granular, so both produce the identical hero.
-  arrival = { fresh, away: now - state.lastSeenAt };
-  writeSave(state);
-  render();
-}
-
-function catchUpNow() {
-  const now = Date.now();
+  // Settle time away immediately — the grid is the whole screen now, so the
+  // hero should be standing on the right floor when it appears.
   const { events, report } = fastForward(state, now);
   absorbEvents(state, events);
   if (report.died) {
@@ -46,28 +39,25 @@ function catchUpNow() {
     resetRun(state, now);
   }
   writeSave(state);
-  arrival = { fresh: false, away: arrival ? arrival.away : 0, events, report };
-  render();
-}
 
-// Floors the clock has already paid for and that have not been delved yet.
-function backlogFloors() {
-  const capped = Math.min(earnedMs(), BALANCE.offline.max_hours * 3600000);
-  return Math.floor(capped / floorCostMs());
+  if (report.floors > 0) {
+    const kills = events.filter((e) => e.type === 'monster_killed' || e.type === 'boss_killed').length;
+    awayLine = `While away: ${report.floors} floor${report.floors === 1 ? '' : 's'}, ${kills} kills` +
+      (report.died ? ' — and a death. A new hero takes the pack.' : '.');
+  }
+
+  beginLiveRun();
 }
 
 /* ---- the live run ------------------------------------------------------ */
 
-function beginWatching() {
+function beginLiveRun() {
   run = runFromSave(state);
   rng = makeRng(runSeedFor(state));
   if (state.run.rngState !== null && state.run.rngState !== undefined) {
     rng.setState(state.run.rngState);
   }
-  lastPersistedDepth = run.depth;
-  feed = [];
-  screen = 'descent';
-  render();
+  paint();
   startTimer();
 }
 
@@ -81,134 +71,69 @@ function stopTimer() {
   timer = null;
 }
 
-// Delving time is earned by the clock at exactly one floor per
-// offline_minutes_per_floor, whether or not anyone is watching. Watching
-// animates that time; it never buys more of it.
-const floorCostMs = () => BALANCE.offline.minutes_per_floor * 60000;
-const earnedMs = () => Date.now() - state.lastSeenAt;
-
-const heroOnStairs = () => atFloorBoundary(run);
-
 function step() {
-  if (!run || run.ended) return stopWatchingRun();
+  if (!run) return;
 
-  // The current floor is already paid for, so it plays out in full. The next
-  // one waits until the clock has earned it — this is the whole reason
-  // watching cannot outpace being away.
-  if (heroOnStairs() && earnedMs() < floorCostMs()) {
-    paintDescent();
+  // The next descent waits until the clock has earned it — watching animates
+  // time, it never buys more of it.
+  if (atFloorBoundary(run) && earnedMs() < floorCostMs()) {
+    repaint();
     return;
   }
 
-  const orders = { doctrine: state.run.doctrine, autoBankEvery: state.run.standingOrder };
+  const orders = { doctrine: state.run.doctrine, autoBankEvery: 0 };
+  const prevDepth = run.depth;
   const out = tick(run, orders, rng);
 
-  // Fold into the save as they happen, or a boss chest won while watching
-  // would never reach the pending queue.
   absorbEvents(state, out.events);
-  let gotChest = false;
+  let mustSave = false;
   for (const e of out.events) {
-    if (e.type === 'boss_killed') gotChest = true;
+    if (e.type === 'boss_killed') mustSave = true;
     const line = eventLine(e);
     if (line) feed.push(line);
   }
-  if (feed.length > 40) feed = feed.slice(-40);
-  if (gotChest) writeSave(state); // a reward is worth an immediate write
+  if (feed.length > 30) feed = feed.slice(-30);
 
-  // Persist ONLY at floor boundaries. A floor regenerates from its seed, so
-  // saving mid-floor and reloading would hand out its gold a second time.
-  if (run.depth > lastPersistedDepth) {
-    lastPersistedDepth = run.depth;
-    chargeOneFloor();
-    persistRun();
+  if (run.depth > prevDepth) {
+    state.lastSeenAt += floorCostMs();
+    if (state.lastSeenAt > Date.now()) state.lastSeenAt = Date.now();
+    mustSave = true;
   }
+  if (mustSave) persistRun();
 
-  if (run.ended) return stopWatchingRun();
-  paintDescent();
+  if (run.ended) {
+    const died = run.endReason === 'died';
+    persistRun();
+    if (died) {
+      state.run.deaths += 1;
+      resetRun(state, Date.now());
+      writeSave(state);
+      feed.push({ cls: 'bad', text: '💀 the hero is gone. Another takes the pack…' });
+    } else {
+      feed.push({ cls: 'bad', text: '⛺ the hero camps. Rations will refill with time.' });
+    }
+    run = null;
+    stopTimer();
+    // A short beat before the next hero walks in.
+    setTimeout(() => beginLiveRun(), died ? 2500 : 60000);
+  }
+  repaint();
+}
+
+// The sim ticks 2.5x a second; redrawing the whole screen at that rate would
+// yank the chest menu out from under a tap. While a chest is open the screen
+// holds still and the sim runs silently behind it.
+function repaint() {
+  if (!openChest) paint();
 }
 
 function persistRun() {
+  if (!run) return;
   applyRunToSave(state, run, rng);
   writeSave(state);
 }
 
-// Spend exactly one floor's worth of earned time, the same amount offline.js
-// charges. Leftover stays on the clock rather than being rounded away.
-function chargeOneFloor() {
-  state.lastSeenAt += floorCostMs();
-  if (state.lastSeenAt > Date.now()) state.lastSeenAt = Date.now();
-}
-
-function stopWatchingRun() {
-  stopTimer();
-  if (!run) return;
-  const ended = run.ended;
-  const died = run.endReason === 'died';
-  persistRun();
-  absorbEvents(state, []);
-  if (died) {
-    state.run.deaths += 1;
-    resetRun(state, Date.now());
-    writeSave(state);
-  }
-  if (ended) {
-    run = null;
-    paintDescent(died ? 'The hero has fallen. A new one shoulders the pack.' : 'The hero has made camp.');
-  }
-}
-
-function leaveWatching() {
-  stopTimer();
-  run = null;
-  screen = 'camp';
-  arrival = null;
-  render();
-}
-
-/* ---- rendering --------------------------------------------------------- */
-
-const pct = (a, b) => Math.max(0, Math.min(100, (a / b) * 100));
-
-function describeAway(ms) {
-  if (ms < 60000) return 'just now';
-  const mins = Math.round(ms / 60000);
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-  const hours = ms / 3600000;
-  if (hours < 48) return `${hours.toFixed(1)} hours ago`;
-  return `${Math.round(hours / 24)} days ago`;
-}
-
-function awayReport(events, report) {
-  if (!report || (report.floors === 0 && report.campedHours === 0)) return '';
-  const count = (t) => events.filter((e) => e.type === t).length;
-  const kills = count('monster_killed');
-  const gold = events.filter((e) => e.type === 'gold_found').reduce((n, e) => n + e.amount, 0);
-  const chests = count('chest_found');
-  const bankedValue = Math.round(
-    events.filter((e) => e.type === 'banked').reduce((n, e) => n + e.value, 0)
-  );
-  const depthRenown = events.filter((e) => e.type === 'depth_renown').reduce((n, e) => n + e.amount, 0);
-
-  const lines = [];
-  if (report.floors) lines.push(`Delved <b>${report.floors}</b> floor${report.floors === 1 ? '' : 's'}.`);
-  if (kills) lines.push(`Killed <b>${kills}</b> monster${kills === 1 ? '' : 's'}.`);
-  if (gold) lines.push(`Found <b>${gold}</b> 🪙.`);
-  if (chests) lines.push(`Turned up <b>${chests}</b> sealed chest${chests === 1 ? '' : 's'}.`);
-  if (bankedValue) lines.push(`Banked <b>${bankedValue}</b> Renown.`);
-  if (depthRenown) lines.push(`Earned <b>${depthRenown}</b> Renown for new depth.`);
-  if (report.campedHours >= 0.1) lines.push(`Camped and foraged <b>${report.campedHours.toFixed(1)}h</b>.`);
-  if (report.died) lines.push(`<b>Died.</b> A new hero takes up the pack.`);
-  if (report.stopped) lines.push(`Read the odds, banked everything and camped — alive.`);
-  if (report.cappedByLimit) lines.push(`<i>Only the last ${BALANCE.offline.max_hours}h counted.</i>`);
-  return `<div class="card"><h2>While you were away</h2>${lines.map((l) => `<p class="line">${l}</p>`).join('')}</div>`;
-}
-
-function render() {
-  if (screen === 'descent') return paintDescent();
-  paintCamp();
-}
-
-/* ---- gear ------------------------------------------------------------- */
+/* ---- gear + chest ------------------------------------------------------ */
 
 const SLOT_LABEL = { weapon: 'Weapon', armor: 'Armor', relic: 'Relic' };
 const SLOT_BLANK = { weapon: '🗡️', armor: '🛡️', relic: '🔮' };
@@ -228,25 +153,29 @@ function equipmentPanel() {
 function chestPanel() {
   const chest = state.pendingChests[0];
   if (!chest) return '';
+  const gold = liveGold();
   if (!openChest) {
     return `<div class="card"><h2>Reward chest</h2>
-      <p class="line">A boss chest is waiting${state.pendingChests.length > 1
-        ? ` (${state.pendingChests.length} in all)` : ''}.</p>
-      <button id="openchest" class="primary wide">🎁 Open it</button></div>`;
+      <button id="openchest" class="primary wide">🎁 Open it${state.pendingChests.length > 1
+        ? ` (${state.pendingChests.length} waiting)` : ''}</button></div>`;
   }
-  const gold = state.hero.carried.gold;
   const opts = rollChestOptions(openChest, openChest.depth || state.hero.floor);
-  return `<div class="card"><h2>Choose one — you have ${gold} 🪙</h2>
+  return `<div class="card"><h2>Choose one — you carry ${gold} 🪙</h2>
     ${opts.map((o, i) => {
       const afford = gold >= o.cost;
       return `<button class="choice" data-i="${i}" ${afford ? '' : 'disabled'}>
-        <div class="big">${o.emoji} ${o.name}</div>
+        <div class="big">${o.emoji} ${o.name} <span class="why">· ${o.tierLabel}</span></div>
         <div class="why">${SLOT_LABEL[o.slot]} — ${o.blurb}</div>
         <div class="fx">${describeGear(o)}</div>
-        <div class="cost">${afford ? '' : 'need '}${o.cost} 🪙</div>
+        <div class="cost">${o.cost} 🪙${afford ? '' : ' — keep saving'}</div>
       </button>`;
     }).join('')}
-    <button id="skipchest">Take nothing</button></div>`;
+    <button id="skipchest">Leave it for now</button></div>`;
+}
+
+// Gold lives on the live run while one is walking, on the save otherwise.
+function liveGold() {
+  return run ? run.carried.gold : state.hero.carried.gold;
 }
 
 function chooseGear(index) {
@@ -254,64 +183,76 @@ function chooseGear(index) {
   if (!chest) return;
   const opts = rollChestOptions(chest, chest.depth || state.hero.floor);
   const item = opts[index];
-  if (!item || state.hero.carried.gold < item.cost) return;
+  if (!item || liveGold() < item.cost) return;
 
-  state.hero.carried.gold -= item.cost;
+  // Spend from the live purse so the grid and the price agree.
+  if (run) run.carried.gold -= item.cost;
+  else state.hero.carried.gold -= item.cost;
+
+  // Apply the gear as a DELTA to the live run — never rebuild it. Rebuilding
+  // regenerates the current floor from its seed, which resurrects everything
+  // already killed on it and lets its gold be farmed twice.
+  const before = equipmentBonuses(state.hero.equipment);
   state.hero.equipment[item.slot] = item;
-  // A bigger max hp from armour should arrive as usable health, not as an
-  // empty gap in the bar.
-  if (item.hp) state.hero.hp += item.hp;
-  finishChest();
-}
+  const after = equipmentBonuses(state.hero.equipment);
+  if (run) {
+    run.hero.weaponBonus += after.atk - before.atk;
+    run.hero.armorBonus += after.def - before.def;
+    run.hero.goldMult = after.goldMult;
+    run.hero.rationSave = after.rationSave;
+    run.hero.maxHp += after.hp - before.hp;
+    // Extra max hp arrives as usable health; a smaller pool clamps.
+    run.hero.hp = Math.max(1, Math.min(run.hero.maxHp, run.hero.hp + Math.max(0, after.hp - before.hp)));
+  }
 
-function finishChest() {
   state.pendingChests.shift();
   openChest = null;
-  writeSave(state);
-  render();
+  persistRun();
+  if (!run) writeSave(state);
+  paint();
 }
 
-/* ---- camp -------------------------------------------------------------- */
+/* ---- the one screen ---------------------------------------------------- */
 
-function paintCamp() {
-  const h = state.hero;
-  const maxRations = BALANCE.hero.start_rations;
-  const backlog = backlogFloors();
+function untilNextFloor() {
+  const left = floorCostMs() - earnedMs();
+  if (left <= 0) return null;
+  const mins = Math.ceil(left / 60000);
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function paint() {
+  const h = run ? run.hero : state.hero;
+  const depth = run ? run.depth : state.hero.floor;
+  const carried = run ? run.carried : state.hero.carried;
+  const waiting = run && atFloorBoundary(run) && earnedMs() < floorCostMs() ? untilNextFloor() : null;
+
   app.innerHTML = `
-    <h1>🕳️ Roguidle</h1>
-    <p class="sub">${arrival && arrival.fresh ? 'A new hero shoulders a pack and starts down.'
-      : arrival ? 'Last seen ' + describeAway(arrival.away) + '.' : 'At camp.'}</p>
-
-    ${arrival && arrival.events ? awayReport(arrival.events, arrival.report) : ''}
-
     <div class="res">
-      <span>🌀 floor <b>${h.floor}</b></span>
-      <span>❤️ <b>${h.hp}</b>/${h.maxHp + equipmentBonuses(h.equipment).hp}</span>
+      <span>🌀 <b>${depth}</b></span>
+      <span>❤️ <b>${h.hp}</b>/${h.maxHp}</span>
       <span>🍖 <b>${h.rations}</b></span>
-      <span>🪙 <b>${h.carried.gold}</b></span>
+      <span>🪙 <b>${carried.gold}</b></span>
+      ${state.pendingChests.length ? `<span>🎁 <b>${state.pendingChests.length}</b></span>` : ''}
     </div>
 
+    ${awayLine ? `<p class="notice">${awayLine}</p>` : ''}
+    ${waiting ? `<p class="notice">⏳ Floor cleared. The hero rests at the stairs — next floor in <b>${waiting}</b>.</p>` : ''}
+
+    ${renderFloor(run)}
+
     ${chestPanel()}
-
-    ${backlog > 0 ? `<div class="card"><h2>Waiting to be delved</h2>
-      <p class="line"><b>${backlog}</b> floor${backlog === 1 ? '' : 's'} of delving has been earned while you were away.
-      Watch it happen, or settle it instantly — the hero ends up in the same place either way.</p></div>` : ''}
-
-    <button id="watch" class="primary wide">▶ Watch the descent${backlog > 0 ? ` (${backlog} ready)` : ''}</button>
-    ${backlog > 0 ? '<button id="catchup" class="wide">⏩ Settle it instantly</button>' : ''}
 
     <div class="card">
       <h2>Equipment</h2>
       ${equipmentPanel()}
     </div>
 
-    <div class="card">
-      <h2>Hero</h2>
-      <div class="stat"><span class="label">Level</span><span class="value">${h.level}</span></div>
-      <div class="bar hp"><span style="width:${pct(h.hp, h.maxHp + equipmentBonuses(h.equipment).hp)}%"></span></div>
-      <div class="bar rations"><span style="width:${pct(h.rations, maxRations)}%"></span></div>
-      <div class="stat"><span class="label">Deepest ever</span><span class="value">floor ${state.meta.maxDepthEver}</span></div>
-      <div class="stat"><span class="label">Deaths</span><span class="value">${state.run.deaths}</span></div>
+    <div class="card feed">
+      <h2>Chronicle</h2>
+      <div id="feedlines">${feed.slice(-10).map((l) => `<div class="line ${l.cls || ''}">${l.text}</div>`).join('')
+        || '<div class="line sub">the descent begins…</div>'}</div>
     </div>
 
     <div class="row">
@@ -320,14 +261,10 @@ function paintCamp() {
     </div>
   `;
 
-  document.getElementById('watch').addEventListener('click', beginWatching);
-  const catchup = document.getElementById('catchup');
-  if (catchup) catchup.addEventListener('click', catchUpNow);
-
   const open = document.getElementById('openchest');
-  if (open) open.addEventListener('click', () => { openChest = state.pendingChests[0]; render(); });
+  if (open) open.addEventListener('click', () => { openChest = state.pendingChests[0]; paint(); });
   const skipChest = document.getElementById('skipchest');
-  if (skipChest) skipChest.addEventListener('click', finishChest);
+  if (skipChest) skipChest.addEventListener('click', () => { openChest = null; paint(); });
   for (const btn of document.querySelectorAll('.choice')) {
     btn.addEventListener('click', () => chooseGear(Number(btn.dataset.i)));
   }
@@ -342,58 +279,7 @@ function paintCamp() {
       location.reload();
     }
   });
-}
 
-function untilNextFloor() {
-  const left = floorCostMs() - earnedMs();
-  if (left <= 0) return null;
-  const mins = Math.ceil(left / 60000);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
-
-function paintDescent(notice) {
-  const h = run ? run.hero : state.hero;
-  const depth = run ? run.depth : state.hero.floor;
-  const carried = run ? run.carried : state.hero.carried;
-  const running = !!timer;
-  const waiting = heroOnStairs() && earnedMs() < floorCostMs() ? untilNextFloor() : null;
-
-  app.innerHTML = `
-    <div class="hud">
-      <button id="back" class="ghost">‹ camp</button>
-      <span class="hud-item">🌀 <b>${depth}</b></span>
-      <span class="hud-item">❤️ <b>${h.hp}</b>/${h.maxHp}</span>
-      <span class="hud-item">🍖 <b>${h.rations}</b></span>
-      <span class="hud-item">🪙 <b>${carried.gold}</b></span>
-      ${state.pendingChests.length ? `<span class="hud-item">🎁 <b>${state.pendingChests.length}</b></span>` : ''}
-    </div>
-
-    ${notice ? `<p class="notice">${notice}</p>` : ''}
-    ${waiting ? `<p class="notice">⏳ The hero waits at the stairs. Next floor in <b>${waiting}</b>
-      — the descent runs at the same pace whether you watch or not.</p>` : ''}
-    ${renderFloor(run)}
-
-    <div class="row">
-      <button id="toggle" ${run ? '' : 'disabled'}>${running ? '⏸ pause' : '▶ resume'}</button>
-      <span class="sub small">${waiting ? 'waiting on the clock' : 'a tick every ' + BALANCE.sim.tick_ms_watchable + 'ms'}</span>
-    </div>
-
-    <div class="card feed">
-      <h2>Chronicle</h2>
-      <div id="feedlines">${feed.slice(-14).map((l) => `<div class="line ${l.cls || ''}">${l.text}</div>`).join('')
-        || '<div class="line sub">the descent begins…</div>'}</div>
-    </div>
-  `;
-
-  document.getElementById('back').addEventListener('click', leaveWatching);
-  const toggle = document.getElementById('toggle');
-  if (toggle) {
-    toggle.addEventListener('click', () => {
-      if (timer) { stopTimer(); } else { startTimer(); }
-      paintDescent(notice);
-    });
-  }
   const lines = document.getElementById('feedlines');
   if (lines) lines.scrollTop = lines.scrollHeight;
 }
@@ -402,13 +288,15 @@ function paintDescent(notice) {
 
 window.addEventListener('pagehide', () => {
   stopTimer();
+  if (run) applyRunToSave(state, run, rng);
   if (state) saveUnlessChangedExternally(state);
 });
 
-// Pause when the tab is hidden; a phone locking its screen should not spend
-// the hero's rations in the background.
+// A locked phone should not tick in the background; the clock keeps earning
+// floors either way, and boot settles them on return.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopTimer();
+  else if (run && !timer) startTimer();
 });
 
 boot();
