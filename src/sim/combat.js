@@ -35,3 +35,26 @@ export function expectedCostToKill(hero, monster) {
   const swingsNeeded = Math.ceil(monster.hp / heroDmg);
   return monsterDmg * Math.max(0, swingsNeeded - 1);
 }
+
+// How much of the hero's pool is expected to survive the next stretch of
+// floors, as a 0-1 fraction. Drives the cautious stop rule now and the shrine
+// UI in P1, so it stays a plain readable number rather than a hidden score.
+// `profile` is threatProfileAt(deepest floor of the horizon): the average
+// inhabitant plus the elite tail. Both terms matter — the elite is what
+// actually kills careful heroes.
+export function survivalForecast(hero, profile) {
+  const F = BALANCE.forecast;
+  // The forecast keeps its OWN margin. Sharing the AI's fight-selection
+  // margin silently couples two decisions: making the hero pickier about
+  // fights also made it panic and quit at the first shrine.
+  const margin = F.variance_margin;
+  const atFull = { ...hero, hp: hero.maxHp };
+  // An elite being ON the floor is not the same as having to fight it — a
+  // careful hero walks around most of them. Only the forced share counts.
+  const perFloor =
+    F.forced_fights_per_floor * expectedCostToKill(atFull, profile.typical) * margin +
+    profile.eliteChance * F.elite_forced_fraction * expectedCostToKill(atFull, profile.elite) * margin;
+  const damage = F.horizon_floors * perFloor;
+  const budget = hero.maxHp * (1 + F.rest_recovery_per_floor * F.horizon_floors);
+  return Math.max(0, Math.min(1, 1 - damage / budget));
+}

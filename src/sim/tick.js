@@ -5,8 +5,8 @@
 // orders: { doctrine: 'greedy'|'swift'|'cautious', autoBankEvery: N }
 // rng:    the run's combat/loot stream (floors derive their own seeds).
 import { BALANCE } from './balance.js';
-import { makeFloor, dist, adjacent4 } from './floor.js';
-import { attackDamage } from './combat.js';
+import { makeFloor, dist, adjacent4, threatProfileAt } from './floor.js';
+import { attackDamage, survivalForecast } from './combat.js';
 import { decideAction } from './doctrine.js';
 import { randInt } from './rng.js';
 
@@ -32,6 +32,10 @@ export function initRun(seed) {
     },
     carried: { gold: 0, chests: { common: 0, rare: 0, gilded: 0 }, greedStacks: 0 },
     banked: { gold: 0, value: 0, chests: 0 },
+    renown: 0,
+    depthRenownPaid: [], // thresholds already claimed this run
+    doctrine: null, // the doctrine actually in force; orders can only change
+    // it at camp or at a shrine, so the tick latches it here
     shrinesSinceBank: 0,
     floor: null,
     floorTicks: 0,
@@ -50,6 +54,7 @@ export function initRun(seed) {
       maxDepth: 0,
       shrinesSeen: 0,
       banks: 0,
+      depthRenown: 0,
     },
   };
 }
@@ -60,12 +65,18 @@ export function tick(state, orders, rng) {
   const events = [];
   if (state.ended) return { state, events };
 
+  // Doctrine switching is free and instant, but only AT camp or a shrine.
+  // Between those the run is committed, so the tick reads its own latched
+  // copy rather than whatever the player has since picked in the UI.
+  if (state.doctrine === null) state.doctrine = orders.doctrine;
+  const inForce = { ...orders, doctrine: state.doctrine };
+
   if (state.depth === 0) {
     enterFloor(state, orders, events);
     if (state.ended) return { state, events };
   }
 
-  const action = decideAction(state, orders);
+  const action = decideAction(state, inForce);
 
   // Close out a rest session the moment the hero stops resting.
   if (action.type !== 'rest' && state.restSession) {
@@ -114,8 +125,11 @@ export function tick(state, orders, rng) {
 // shrine floor, then generate the new floor.
 function enterFloor(state, orders, events) {
   const B = BALANCE;
-  const cost = B.hero.ration_cost_per_floor[orders.doctrine];
+  const cost = B.hero.ration_cost_per_floor[state.doctrine];
   if (state.hero.rations < cost) {
+    // Camping is not dying. Only DEATH loses what the hero carries
+    // (game-design.md), so a hero who runs dry walks its haul home.
+    bankNow(state, events);
     state.ended = true;
     state.endReason = 'camped';
     events.push(ev(state, 'out_of_rations', {}));
@@ -125,12 +139,35 @@ function enterFloor(state, orders, events) {
 
   state.depth += 1;
   state.stats.maxDepth = state.depth;
+  payDepthRenown(state, events);
 
-  // Shrine at the entrance of every Nth floor: bank or push.
+  // Shrine at the entrance of every Nth floor: switch doctrine, then bank or push.
   if (state.depth >= B.shrines.every_n_floors && state.depth % B.shrines.every_n_floors === 0) {
     state.stats.shrinesSeen++;
-    state.shrinesSinceBank++;
     events.push(ev(state, 'shrine_reached', {}));
+
+    // Switching is free and instant at a shrine (game-design.md).
+    if (orders.doctrine && orders.doctrine !== state.doctrine) {
+      events.push(ev(state, 'doctrine_switched', { from: state.doctrine, to: orders.doctrine }));
+      state.doctrine = orders.doctrine;
+      state.path = null;
+      state.pathKey = null;
+    }
+
+    // The Cautious stop rule: read the odds for the stretch ahead, and if they
+    // are bad, bank everything and make camp. Run over, hero alive, haul kept.
+    const ahead = threatProfileAt(state.depth + B.forecast.horizon_floors);
+    const forecast = survivalForecast(state.hero, ahead);
+    state.lastForecast = forecast;
+    if (state.doctrine === 'cautious' && forecast < B.forecast.cautious_stop_below) {
+      bankNow(state, events);
+      state.ended = true;
+      state.endReason = 'stopped';
+      events.push(ev(state, 'made_camp', { forecast: Math.round(forecast * 100) }));
+      return;
+    }
+
+    state.shrinesSinceBank++;
     if (orders.autoBankEvery && state.shrinesSinceBank >= orders.autoBankEvery) {
       bankNow(state, events);
     } else {
@@ -157,6 +194,22 @@ function enterFloor(state, orders, events) {
   events.push(ev(state, 'floor_entered', { monsters: byType, elites }));
 }
 
+// Depth Renown: paid the first time a run passes each threshold, banked on
+// the spot. No shrine needed and no later death takes it back — this is how a
+// doctrine that skips the loot still scores (game-design.md).
+function payDepthRenown(state, events) {
+  const R = BALANCE.renown;
+  const claim = (floorNum, amount) => {
+    if (state.depth < floorNum || state.depthRenownPaid.includes(floorNum)) return;
+    state.depthRenownPaid.push(floorNum);
+    state.renown += amount;
+    state.stats.depthRenown += amount;
+    events.push(ev(state, 'depth_renown', { floor: floorNum, amount }));
+  };
+  for (const [floorNum, amount] of R.depth_thresholds) claim(floorNum, amount);
+  for (let f = 35; f <= state.depth; f += 5) claim(f, R.depth_beyond_30_per_5);
+}
+
 function bankNow(state, events) {
   const B = BALANCE;
   const c = state.carried;
@@ -167,6 +220,7 @@ function bankNow(state, events) {
     state.banked.gold += c.gold;
     state.banked.value += value;
     state.banked.chests += chestCount;
+    state.renown += value; // banked value IS Renown (game-design.md)
     state.stats.banks++;
     events.push(
       ev(state, 'banked', { gold: c.gold, chests: chestCount, stacks: c.greedStacks, mult, value })

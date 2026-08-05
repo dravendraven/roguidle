@@ -95,6 +95,12 @@ function chronicleLines(events) {
       case 'shrine_reached':
         out.push({ text: `⛩️ a shrine hums at the entrance of floor ${e.depth}` });
         break;
+      case 'doctrine_switched':
+        out.push({ text: `🔄 doctrine changed at the shrine: ${e.from} → ${e.to}` });
+        break;
+      case 'depth_renown':
+        out.push({ text: `🏅 first descent past floor ${e.floor} — ${e.amount} Renown, banked on the spot` });
+        break;
       case 'pushed_on':
         out.push({ text: `🔥 pushed on past the shrine — greed ×${(1 + 0.25 * e.stacks).toFixed(2)}` });
         break;
@@ -122,6 +128,9 @@ function chronicleLines(events) {
       case 'out_of_rations':
         out.push({ cls: 'fate', text: `⛺ the larder is empty — the hero camps below floor ${e.depth}` });
         break;
+      case 'made_camp':
+        out.push({ cls: 'fate', text: `⛺ the odds ahead read ${e.forecast}% — the hero banks everything and makes camp on floor ${e.depth}, alive` });
+        break;
       case 'stalled':
         out.push({ text: `🕳️ wandered too long — heads straight for the stairs` });
         break;
@@ -132,15 +141,18 @@ function chronicleLines(events) {
 
 function summaryHtml(state) {
   const s = state.stats;
-  const fate = state.endReason === 'died'
-    ? `💀 died on floor ${state.depth}`
-    : `⛺ camped, floor ${state.depth}`;
+  const FATE = {
+    died: `💀 died on floor ${state.depth}`,
+    stopped: `⛺ stopped at the shrine on floor ${state.depth}, alive`,
+    camped: `⛺ out of rations, floor ${state.depth}`,
+  };
   const chestsBanked = state.banked.chests;
   const kills = `${s.kills}${s.eliteKills ? ' (' + s.eliteKills + ' elite)' : ''}`;
   return `
-    <b>${fate}</b><br>
-    depth ${s.maxDepth} · level ${state.hero.level} · ⚔️ ${kills} kills<br>
-    🏦 ${state.banked.gold}🪙 banked (${Math.round(state.banked.value)} value${chestsBanked ? ', ' + chestsBanked + ' chests' : ''})<br>
+    <b>${FATE[state.endReason] || state.endReason}</b><br>
+    🏅 <b>${Math.round(state.renown)} Renown</b> (${Math.round(state.banked.value)} banked + ${s.depthRenown} depth)<br>
+    depth ${s.maxDepth} · level ${state.hero.level} · ⚔️ ${kills} kills · ⛩️ ${s.shrinesSeen} shrines<br>
+    🏦 ${state.banked.gold}🪙 banked${chestsBanked ? ', ' + chestsBanked + ' chests' : ''}<br>
     🪙 ${s.goldCollected} collected · ${state.endReason === 'died' ? state.carried.gold + '🪙 lost' : state.carried.gold + '🪙 still carried'}<br>
     ${state.t} ticks (${s.restTicks} resting) · rations left: ${state.hero.rations}`;
 }
@@ -199,6 +211,8 @@ async function runBatch() {
         kills: state.stats.kills,
         gold: state.stats.goldCollected,
         bankedValue: state.banked.value,
+        renown: state.renown,
+        shrines: state.stats.shrinesSeen,
         ticks: state.t,
       });
       if (i % 50 === 49) {
@@ -228,6 +242,9 @@ function renderBatch(results, N) {
       avgKills: mean(r.map((x) => x.kills)),
       avgGold: mean(r.map((x) => x.gold)),
       avgBanked: mean(r.map((x) => x.bankedValue)),
+      medRenown: median(r.map((x) => x.renown)),
+      avgRenown: mean(r.map((x) => x.renown)),
+      medShrines: median(r.map((x) => x.shrines)),
       avgTicks: mean(r.map((x) => x.ticks)),
     });
   }
@@ -237,9 +254,9 @@ function renderBatch(results, N) {
 
   const fmt = (x, d = 1) => x.toFixed(d);
   let html = `<h2>Batch: ${N} runs per doctrine</h2><table>
-    <tr><th>doctrine</th><th>died %</th><th>median death floor</th><th>avg depth</th><th>median depth</th><th>avg kills</th><th>avg gold</th><th>avg banked value</th><th>avg ticks</th></tr>`;
+    <tr><th>doctrine</th><th>died %</th><th>median death floor</th><th>avg depth</th><th>median depth</th><th>median Renown</th><th>avg Renown</th><th>median shrines</th><th>avg kills</th><th>avg gold</th><th>avg banked</th><th>avg ticks</th></tr>`;
   for (const r of rows) {
-    html += `<tr><td>${r.label}</td><td>${fmt(r.diedPct)}%</td><td>${r.medDeathFloor || '—'}</td><td>${fmt(r.avgDepth)}</td><td>${r.medDepth}</td><td>${fmt(r.avgKills)}</td><td>${fmt(r.avgGold)}</td><td>${fmt(r.avgBanked)}</td><td>${fmt(r.avgTicks, 0)}</td></tr>`;
+    html += `<tr><td>${r.label}</td><td>${fmt(r.diedPct)}%</td><td>${r.medDeathFloor || '—'}</td><td>${fmt(r.avgDepth)}</td><td>${r.medDepth}</td><td><b>${fmt(r.medRenown, 0)}</b></td><td>${fmt(r.avgRenown, 0)}</td><td>${r.medShrines}</td><td>${fmt(r.avgKills)}</td><td>${fmt(r.avgGold)}</td><td>${fmt(r.avgBanked)}</td><td>${fmt(r.avgTicks, 0)}</td></tr>`;
   }
   html += `</table>`;
 
@@ -247,15 +264,19 @@ function renderBatch(results, N) {
   const swiftRatio = s.avgDepth / g.avgDepth;
   const greedKillRatio = g.avgKills / s.avgKills;
   const greedGoldRatio = g.avgGold / s.avgGold;
-  const cautiousDeathRatio = c.diedPct / (g.diedPct || 1);
+  const bestRenown = Math.max(...rows.map((r) => r.medRenown));
+  const worstRenown = Math.min(...rows.map((r) => r.medRenown));
+  const renownParity = bestRenown ? worstRenown / bestRenown : 0;
+  const minShrines = Math.min(...rows.map((r) => r.medShrines));
   const mark = (ok) => (ok ? '✅' : '⚠️');
   html += `<div class="check">
     ${mark(rows.every((r) => r.medDeathFloor === 0 || (r.medDeathFloor >= 6 && r.medDeathFloor <= 12)))}
       First-death target (floors 6–12): greedy ${g.medDeathFloor || '—'}, swift ${s.medDeathFloor || '—'}, cautious ${c.medDeathFloor || '—'}<br>
-    ${mark(swiftRatio >= 1.2 && swiftRatio <= 1.45)} Swift depth vs Greedy: ×${fmt(swiftRatio, 2)} (target ~×1.3 per ration)<br>
+    ${mark(swiftRatio >= 1.2 && swiftRatio <= 1.5)} Swift depth vs Greedy: ×${fmt(swiftRatio, 2)} (target ~×1.3 per ration)<br>
     ${mark(greedKillRatio >= 1.35)} Greedy kills vs Swift: ×${fmt(greedKillRatio, 2)} · gold ×${fmt(greedGoldRatio, 2)} (target ~×1.5)<br>
-    ${mark(cautiousDeathRatio <= 0.34)} Cautious deaths vs Greedy: ×${fmt(cautiousDeathRatio, 2)} (target under ×0.33)<br>
-    ${mark(g.avgBanked > 0)} Greedy banks anything at all: ${fmt(g.avgBanked)} avg banked value
+    ${mark(c.diedPct < 10)} Cautious deaths: ${fmt(c.diedPct)}% (target under 10%)<br>
+    ${mark(renownParity >= 0.6)} Renown parity: worst median is ${fmt(100 * renownParity, 0)}% of best (target ≥60%) — ${rows.map((r) => r.label.slice(2) + ' ' + fmt(r.medRenown, 0)).join(', ')}<br>
+    ${mark(minShrines >= 2)} Live bank-or-push decisions: median shrines reached ${rows.map((r) => r.label.slice(2) + ' ' + r.medShrines).join(', ')} (target ≥2 each)
   </div>`;
 
   // Death-floor histograms

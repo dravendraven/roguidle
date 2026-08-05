@@ -8,6 +8,15 @@ Status: INITIAL GUESSES. Every value below must be validated by the P0 batch
 simulator (1,000 seeded runs per doctrine) before being treated as real.
 Tuning targets are listed so future tuning sessions know what "good" means.
 
+Measured baseline, batch 14 (1,000 runs per doctrine, seed 12345, standing
+order = bank every 2 shrines). Compare against this before claiming a change
+helped:
+
+  doctrine  died%  med death floor  avg depth  med Renown  med shrines
+  Greedy    33.8   6                7.3        108         2
+  Swift     93.8   11               10.4       65          3
+  Cautious  16.9   5                5.8        56          2
+
 ## Tuning targets (what we are aiming for, not values)
 
 - First hero death: somewhere on floors 6-12 for a fresh account.
@@ -28,6 +37,13 @@ Tuning targets are listed so future tuning sessions know what "good" means.
   accepted price.
 - Renown parity: no doctrine's MEDIAN Renown below ~60% of the best doctrine's.
   Batch reports carry a Renown column per doctrine from now on.
+  // MEASURED (batch 14): Greedy 108, Swift 65, Cautious 56 — parity 51%.
+  // OWNER: this target is in real tension with pillar 3. Cautious earns 52%
+  // of Greedy's Renown for HALF the death rate (16.9% vs 33.8%). Lift it to
+  // 60% and safe play becomes the risk-adjusted best answer at every phase,
+  // which is exactly the "one doctrine strictly correct" alarm. Either the
+  // parity floor drops for Cautious specifically, or Cautious needs a ceiling
+  // it cannot pass (it is already ration-capped at ~6 floors). Not a knob.
 - Bank-or-push: a median run faces at least 2 live decisions. One decision per
   run is not a mechanic.
 - Pushing shrines while strong: informed EV clearly positive (+30-50% Renown),
@@ -94,6 +110,9 @@ bat:    { hp: 2, atk: 0, def: 1, xp: 1 }
 wolf:   { hp: 4, atk: 1, def: 1, xp: 3 }
 spider: { hp: 3, atk: 1, def: 0, xp: 2 }
 elite_multiplier: { hp: x3, atk: +1, xp: x4, spawn_rate: 0.04 }
+elite_min_depth: 4 // INITIAL GUESS — no elites on floors 1-3. An elite on
+// floor 1 (9 hp, atk 2) simply kills a 14 hp level-1 hero, which is why the
+// "first death on floors 6-12" target kept failing with a median of 4.
 gold_drops: { rat: 0-2, bat: 0-2, spider: 1-3, wolf: 2-5 } // INITIAL GUESS
 elite_gold_mult: x3 // INITIAL GUESS
 
@@ -121,7 +140,9 @@ biome_scaling: monster hp/atk/def/xp/gold x1.6 per biome past the first,
 
 rest_ticks_per_hp: 2  // resting heals 1 hp per 2 ticks (was 3, batch 1)
 rest_below_frac: { greedy: 0.70, swift: 0.65, cautious: 0.70 } // (batch 3: swift 0.40→0.65)
-rest_until_frac: { greedy: 0.90, swift: 0.90, cautious: 0.90 } // (batch 3: swift 0.60→0.90)
+rest_until_frac: { greedy: 0.90, swift: 0.90, cautious: 1.00 }
+// (batch 3: swift 0.60→0.90; batch 12: cautious 0.90→1.00, worth 2pp of death
+// rate for nothing — resting costs ticks, and cautious already pays for ticks)
 // swift rests generously: resting costs time, never rations, and rations are
 // swift's slack resource — diving at level 1 on low hp was killing it at floor 5
 cautious_reserve_frac: 0.55 // fight only if expected hp cost leaves this
@@ -175,6 +196,13 @@ gilded_chest_min_stacks: 2
 
 banked_renown = banked loot value x (1 + greed_bonus_per_stack * greed_stacks)
 
+A run that ends ALIVE — out of rations, or stopped by the Cautious rule —
+banks whatever the hero is carrying, at the current greed multiplier. Only
+death loses the pack (game-design.md). Before batch 13 a hero who ran dry
+simply lost its haul, which quietly punished exactly the doctrines that
+survive; it also read as a bug against the "camping is never a punishment"
+line in the core loop.
+
 depth_renown: // INITIAL GUESS — owner decision 2026-08-05
 // Paid the FIRST time a run passes each threshold, banked on the spot: no
 // shrine needed, and no later death can take it back. This is Swift's scoring
@@ -203,14 +231,41 @@ rest_recovery_per_floor: 0.5 // fraction of max hp regained by resting // INITIA
 
 forecast = clamp(1 - expected_damage / hp_budget, 0, 1), where
   expected_damage = horizon_floors * forced_fights_per_floor *
-                    expected_cost_to_kill(hero at full hp, median monster at the
-                    DEEPEST floor of the horizon) * cautious_variance_margin
+                    expected_cost_to_kill(hero at full hp, the typical monster
+                    at the DEEPEST floor of the horizon) * cautious_variance_margin
+                    // "typical" = the spawn-weighted average monster for that
+                    // depth band, biome scaling applied. No dice involved.
   hp_budget       = max_hp * (1 + rest_recovery_per_floor * horizon_floors)
+
+variance_margin: 1.6 // the forecast's OWN margin, deliberately separate from
+// ai.cautious_variance_margin. Sharing one number coupled two unrelated
+// decisions: making the hero pickier about fights also made the forecast
+// panic, so it quit at the first shrine (measured, sweep 2).
 
 cautious_stop_below: 0.35 // INITIAL GUESS — at a shrine, if the forecast is
 // below this, Cautious banks everything and makes camp: run over, hero alive,
-// haul kept. Tune against the "Cautious deaths under 10%" target. Raising it
-// makes Cautious quit earlier (safer, shallower, poorer).
+// haul kept. Raising it makes Cautious quit earlier (safer, shallower, poorer).
+//
+// MEASURED (sweep 1, 400 runs per setting): this rule is currently almost
+// inert, and not because it is wrong. A 12-ration larder at 2.0/floor ends a
+// Cautious run at floor 6 anyway, and the forecast only drops below 0.35 at
+// the biome-2 wall around floor 9. The threshold sweep is a step function,
+// not a dial: <=0.40 never fires, 0.45-0.50 fires only at floor 9 (14.5% of
+// runs), 0.60 fires at floor 3 for 98.5% of runs and reduces the doctrine to
+// "quit immediately" (median depth 3, median Renown 15 against 49).
+// It is kept at 0.35 because it is the setting that will matter once larders
+// grow in P1+ and runs actually reach the wall. Do not tune it to chase the
+// death target — see the note on that target below.
+//
+// WHY CAUTIOUS DEATHS SIT AT ~17-19%, NOT UNDER 10% (sweeps 2 and 3):
+// fight selectivity is near-irrelevant. Sweeping cautious_variance_margin
+// 1.6 -> 3.4 and cautious_reserve_frac 0.55 -> 0.70 moves deaths only from
+// 18.7% to 16.3%. A hero that refuses almost every fight still dies at that
+// rate, which means the fights that kill Cautious are the ones it cannot
+// refuse: caught, chased, cornered at reduced hp on floors 1-6. Getting under
+// 10% therefore needs an early-game power or difficulty change (starting hp,
+// heal rate, monster density or chase rules on floors 1-6), all of which move
+// Greedy and Swift too. That is an owner decision, not a tuning knob.
 
 ## Chests
 

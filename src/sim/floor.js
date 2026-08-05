@@ -17,6 +17,54 @@ export function adjacent4(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) === 1;
 }
 
+export function monsterCountAt(depth) {
+  const B = BALANCE.floors;
+  return Math.min(B.monsters_max, B.monsters_base + Math.floor(depth / B.monsters_per_depth_div));
+}
+
+// The spawn-weighted average inhabitant of a floor, with biome scaling
+// applied. No randomness: this is what the survival forecast reasons about
+// when the hero asks "what is waiting for me down there".
+export function typicalMonsterAt(depth) {
+  const B = BALANCE;
+  const band = B.floors.spawn_weights.find((b) => depth <= b.up_to_depth);
+  const scale = Math.pow(B.floors.biome_scale_per_biome, Math.ceil(depth / 10) - 1);
+  let total = 0;
+  const avg = { hp: 0, atk: 0, def: 0 };
+  for (const [type, w] of Object.entries(band.weights)) {
+    if (!w) continue;
+    total += w;
+    avg.hp += B.monsters[type].hp * w;
+    avg.atk += B.monsters[type].atk * w;
+    avg.def += B.monsters[type].def * w;
+  }
+  return {
+    hp: (avg.hp / total) * scale,
+    atk: (avg.atk / total) * scale,
+    def: (avg.def / total) * scale,
+  };
+}
+
+// What a floor at this depth actually threatens the hero with: the average
+// inhabitant, plus the elite tail. Forecasting on the average alone reads a
+// comfortable 0.65 on exactly the floors where careful heroes die, because
+// what kills them is the 4%-spawn elite, not the median rat.
+export function threatProfileAt(depth) {
+  const B = BALANCE;
+  const typical = typicalMonsterAt(depth);
+  const elite = {
+    hp: typical.hp * B.elite.hp_mult,
+    atk: typical.atk + B.elite.atk_bonus,
+    def: typical.def,
+  };
+  const spawns = depth < B.elite.min_depth ? 0 : B.elite.spawn_rate;
+  return {
+    typical,
+    elite,
+    eliteChance: 1 - Math.pow(1 - spawns, monsterCountAt(depth)),
+  };
+}
+
 export function makeFloor(runSeed, depth, greedStacks) {
   const B = BALANCE;
   const w = B.floors.width;
@@ -104,7 +152,7 @@ export function makeFloor(runSeed, depth, greedStacks) {
     if (!t) break;
     const type = pickWeighted(rng, Object.entries(band.weights));
     const base = B.monsters[type];
-    const elite = chance(rng, B.elite.spawn_rate);
+    const elite = depth >= B.elite.min_depth && chance(rng, B.elite.spawn_rate);
     const m = {
       id: i,
       type,

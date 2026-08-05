@@ -27,7 +27,7 @@ export const BALANCE = {
     spider: { hp: 3, atk: 1, def: 0, xp: 2, gold: [1, 3] },
   },
 
-  elite: { hp_mult: 3, atk_bonus: 1, xp_mult: 4, gold_mult: 3, spawn_rate: 0.04 },
+  elite: { hp_mult: 3, atk_bonus: 1, xp_mult: 4, gold_mult: 3, spawn_rate: 0.04, min_depth: 4 },
 
   floors: {
     width: 32,
@@ -51,7 +51,7 @@ export const BALANCE = {
     leash_radius: 8,
     rest_ticks_per_hp: 2,
     rest_below_frac: { greedy: 0.7, swift: 0.65, cautious: 0.7 },
-    rest_until_frac: { greedy: 0.9, swift: 0.9, cautious: 0.9 },
+    rest_until_frac: { greedy: 0.9, swift: 0.9, cautious: 1.0 },
     cautious_flee_frac: 0.65,
     cautious_reserve_frac: 0.55,
     cautious_engage_frac: 0.8,
@@ -60,9 +60,28 @@ export const BALANCE = {
   },
 
   shrines: {
-    every_n_floors: 5,
-    greed_bonus_per_stack: 0.25, // renown multiplier: 1 + 0.25 * stacks
+    every_n_floors: 3, // was 5: a median run must face 2+ bank-or-push calls
+    greed_bonus_per_stack: 0.15, // was 0.25, scaled by 3/5 for the new cadence
     gilded_min_stacks: 2,
+  },
+
+  renown: {
+    // Paid the first time a run passes each floor, banked on the spot and
+    // never lost to a later death. Swift's scoring route.
+    depth_thresholds: [
+      [3, 5], [5, 12], [10, 30], [15, 60], [20, 110], [25, 180], [30, 300],
+    ],
+    depth_beyond_30_per_5: 120,
+  },
+
+  // Drives the cautious stop rule; becomes the shrine UI in P1.
+  forecast: {
+    horizon_floors: 3,
+    forced_fights_per_floor: 1.5,
+    elite_forced_fraction: 0.35, // share of elites the hero cannot dodge
+    variance_margin: 1.6, // the forecast's own; NOT ai.cautious_variance_margin
+    rest_recovery_per_floor: 0.5,
+    cautious_stop_below: 0.35,
   },
 
   chests: {
