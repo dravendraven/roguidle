@@ -1,5 +1,24 @@
 # Balance — single source of truth for all tuning numbers
 
+## BALANCE FREEZE (P1) — owner decision 2026-08-05
+
+Values below are frozen as of the end of P0. During P1, change a number only
+if the game is otherwise unplayable, meaning one of:
+
+- a crash,
+- no run surviving floor 1,
+- offline fast-forward producing impossible states.
+
+Anything else you notice — a curve that looks wrong, a doctrine that feels
+weak, a rate that seems off — goes at the BOTTOM of this file under
+"Observed, retune after P1". Do not open a tuning batch for it. No new
+1,000-run batches during P1 unless the owner asks, or unless the offline
+fast-forward disagrees with the tick badly enough to be a bug.
+
+The INITIAL GUESS markers throughout this file stay exactly as they are.
+They record which numbers were never validated; they are NOT a to-do list
+for this phase.
+
 Rule from CLAUDE.md: no balance value may be hardcoded in logic files.
 Code loads these values as data (a balance.js module mirroring this file,
 or this file parsed directly). When a number changes here, it changes there.
@@ -305,3 +324,25 @@ renown_multiplier_by_doctrine: { greedy: 1.5, swift: 1.2, cautious: 1.0 }
 tick_ms_watchable: 400
 offline_resolution: per-floor aggregate (see tech-design 4.1)
 max_offline_hours_uncapped_by_larder: 24
+
+## Observed, retune after P1
+
+Things noticed while building, deliberately NOT acted on during the balance
+freeze. Add to this list rather than opening a tuning batch. Each entry: what
+was seen, and where the evidence is.
+
+- Cautious deaths sit at 16.9%, target is under 10%. Fight selectivity does
+  not move it (measured: margin 1.6 to 3.4 changes deaths only 18.7% to
+  16.3%), because the lethal fights are the unavoidable ones. Needs an
+  early-game power or difficulty decision from the owner, which moves all
+  three doctrines. See the note under cautious_stop_below.
+- Renown parity is 51%, target 60% (Greedy 108, Swift 65, Cautious 56). In
+  real tension with pillar 3 — see the note under the parity target.
+- Cautious median first death is floor 5; the target band is 6-12. Same root
+  cause as the death-rate item.
+- The Cautious stop rule is almost inert at the current larder size: a
+  12-ration run at 2.0/floor ends at floor 6 anyway, before the forecast
+  turns bad around floor 9. Expected to start mattering once larders grow.
+- Greedy is the Renown leader by a wide margin once a surviving run banks its
+  pack. Worth re-checking after P1 whether pushing (greed stacks) is ever
+  worth it versus banking every shrine.

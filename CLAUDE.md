@@ -14,7 +14,11 @@ Only build what the current phase requires. Do not add features from future
 phases or from the "Explicitly OUT of MVP" list in game-design.md, even if
 they seem easy or are mentioned in the docs.
 
-**Current phase: P0** (update this line manually as phases complete)
+**Current phase: P1** (update this line manually as phases complete)
+
+P1 goal: something playable and persistent on a phone. Ugly is fine.
+Balance is FROZEN during P1 — see the freeze note at the top of
+docs/balance.md before changing any number.
 
 To run the sim: `python tools/dev-server.py` then open
 http://localhost:8137/run-sim.html — that server disables browser caching, so
