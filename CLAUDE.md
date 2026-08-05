@@ -20,6 +20,11 @@ P1 goal: something playable and persistent on a phone. Ugly is fine.
 Balance is FROZEN during P1 — see the freeze note at the top of
 docs/balance.md before changing any number.
 
+The watchable descent (emoji grid, live tick view) was pulled forward from P2
+at the owner's request on 2026-08-05, ahead of the rest of P1. Still not
+built, and still not to be built without asking: Daily Gate, share card,
+wardens, relics, embers.
+
 To run the sim: `python tools/dev-server.py` then open
 http://localhost:8137/run-sim.html — that server disables browser caching, so
 edits to src/sim/*.js actually take effect. Opening the file directly will not
