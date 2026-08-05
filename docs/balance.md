@@ -362,13 +362,12 @@ was seen, and where the evidence is.
 - The Cautious stop rule is almost inert at the current larder size: a
   12-ration run at 2.0/floor ends at floor 6 anyway, before the forecast
   turns bad around floor 9. Expected to start mattering once larders grow.
-- Watching beats waiting, badly. A watched floor takes ~1 minute at
-  tick_ms_watchable 400, while an unwatched one takes offline_minutes_per_floor
-  120. Same rulebook, ~130x the rate, so leaving the tab open is strictly the
-  best way to play. tech-design section 9 waves this off as harmless in a
-  client-only game, but it undercuts the idle premise. Reconcile before P2:
-  either watching is a replay of time the clock already granted, or the
-  offline rate rises to meet it.
+- RESOLVED 2026-08-05 (owner: "it should advance in the same speed"). Delving
+  time is earned by the clock at offline_minutes_per_floor, watched or not.
+  Watching animates time already granted, then waits on the stairs for the
+  next floor; it never buys progress. tick_ms_watchable is now only a
+  playback speed, not a rate of advance. Both paths stop at one shared
+  boundary (atFloorBoundary in offline.js) and are verified bit-identical.
 - Greedy is the Renown leader by a wide margin once a surviving run banks its
   pack. Worth re-checking after P1 whether pushing (greed stacks) is ever
   worth it versus banking every shrine.

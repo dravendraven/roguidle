@@ -73,6 +73,25 @@ export function applyRunToSave(save, run, rng) {
 // How much wall-clock time one floor of delving costs.
 const floorMs = () => BALANCE.offline.minutes_per_floor * 60000;
 
+// The one place a run is allowed to pause: standing on the stairs of a floor
+// it has finished, waiting for the clock to pay for the next descent. Both
+// the instant catch-up and the watched view stop here, which is what makes
+// them produce the same hero — exported so neither can drift from the other.
+export function atFloorBoundary(run) {
+  return !!run && !!run.floor && run.hero.x === run.floor.stairs.x && run.hero.y === run.floor.stairs.y;
+}
+
+// Play the current floor out to its stairs without paying for a descent.
+// The floor was already bought; this is just the rest of it happening.
+export function settleToBoundary(run, orders, rng, events) {
+  let guard = 0;
+  const limit = BALANCE.sim.max_ticks_per_floor * 4;
+  while (!run.ended && !atFloorBoundary(run) && guard++ < limit) {
+    const out = tick(run, orders, rng);
+    for (const e of out.events) events.push(e);
+  }
+}
+
 // Resolve one floor: run real ticks until the hero descends or the run ends.
 // Returns true when a floor was actually completed.
 function resolveOneFloor(run, orders, rng, events) {
@@ -142,6 +161,9 @@ export function fastForward(save, now) {
     report.floors += 1;
     budget -= perFloor;
   }
+
+  // Leave the hero exactly where the watched view would leave it.
+  settleToBoundary(run, orders, rng, events);
 
   report.died = run.endReason === 'died';
   report.stopped = run.endReason === 'stopped';
