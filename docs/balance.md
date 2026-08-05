@@ -11,13 +11,42 @@ Tuning targets are listed so future tuning sessions know what "good" means.
 ## Tuning targets (what we are aiming for, not values)
 
 - First hero death: somewhere on floors 6-12 for a fresh account.
-- First Balrog prestige: day 3-4 of normal play.
+- Reaching the Balrog gate: 1-2 weeks of normal play, held roughly CONSTANT
+  across prestige cycles. What grows between cycles is depth, not duration
+  (run 1: ~10 days to floor 30; run 5: ~10 days to floor 70).
+  // was "First Balrog prestige: day 3-4 of normal play" — owner decision
+  // 2026-08-05 replaced it. A 3-day gate cannot carry a prestige economy.
+- Prestige speed-up: cycle N reaches cycle N-1's gate noticeably faster than
+  N-1 did. That speed-up is where permanent progress is felt.
+- If runs stretch past ~2.5 weeks: widen the power curve. NEVER steepen
+  difficulty scaling to compensate — that eats the upgrades just bought.
 - Greedy vs Swift vs Cautious: visibly different chronicles on the same seed;
-  Swift reaches ~30% deeper per ration, Greedy earns ~50% more loot/kills,
-  Cautious death rate under 1/3 of Greedy's.
+  Swift reaches ~30% deeper per ration, Greedy earns ~50% more loot/kills.
+- Cautious death rate under 10% (was "under 1/3 of Greedy's"). Cautious ends
+  its own run at shrines when the forecast turns bad, so its deaths are
+  genuine surprises, not the cost of doing business. Depth ceiling is the
+  accepted price.
+- Renown parity: no doctrine's MEDIAN Renown below ~60% of the best doctrine's.
+  Batch reports carry a Renown column per doctrine from now on.
+- Bank-or-push: a median run faces at least 2 live decisions. One decision per
+  run is not a mechanic.
 - Pushing shrines while strong: informed EV clearly positive (+30-50% Renown),
   suicidal while weak. Survival forecast accuracy matters more than fairness.
 - 24h offline on a full early-game larder: rations run out around hour 14-18.
+
+## Core principle: rations are time
+
+Rations are the time currency. Anything that spends more ticks per floor pays
+more rations per floor — this is a principle, not a knob, and the Cautious
+(2.0) above Greedy (1.5) ordering that follows from it must not be reverted.
+P0 measured why: Cautious took ~2x Greedy's ticks per floor while paying less,
+so careful play strictly dominated (see ration_cost_per_floor below).
+
+## Doctrine switching
+
+Free and instant, at camp AND at any shrine mid-run. No cost, no cooldown.
+Doctrines are phase tools; the rotation IS the meta, and it only exists if a
+player can switch mid-run. Programmable routes are post-MVP (game-design.md).
 
 ## Hero
 
@@ -130,14 +159,58 @@ max_ticks_per_floor: 800 // failsafe: hero force-marches to stairs // INITIAL GU
 
 ## Shrines and greed
 
-shrine_every_n_floors: 5
-// FINDING (batch 10, unresolved): on a 12-ration larder only Swift reaches a
-// SECOND shrine (floor 10), so a standing order of "auto-bank every 2 shrines"
-// means Greedy and Cautious never bank at all and lose everything on death.
-// The bank-or-push decision barely exists this early. Either the first shrine
-// comes sooner than floor 5, or the starting larder is bigger. Owner's call.
-greed_bonus_per_stack: 0.25   // renown multiplier: 1 + 0.25 * stacks
+shrine_every_n_floors: 3
+// was 5. Owner decision 2026-08-05, resolving the batch-10 finding: on a
+// 12-ration larder only Swift reached a SECOND shrine (floor 10), so Greedy
+// and Cautious never banked at all and lost everything on death. Every 3
+// floors puts at least 2 live bank-or-push decisions in a median run.
+greed_bonus_per_stack: 0.15   // renown multiplier: 1 + 0.15 * stacks
+// was 0.25, retuned DOWN because shrines are now 5/3 as frequent: 0.25 * 3/5
+// = 0.15 keeps the reward per DEPTH travelled about where it was rather than
+// inflating it by 67%. Skipping 2 shrines is x1.30, which lands inside the
+// "+30-50% for an informed push" target above. Validate in batch.
 gilded_chest_min_stacks: 2
+
+## Renown
+
+banked_renown = banked loot value x (1 + greed_bonus_per_stack * greed_stacks)
+
+depth_renown: // INITIAL GUESS — owner decision 2026-08-05
+// Paid the FIRST time a run passes each threshold, banked on the spot: no
+// shrine needed, and no later death can take it back. This is Swift's scoring
+// route — what a doctrine that skips the loot actually earns.
+  floor 3:  5
+  floor 5:  12
+  floor 10: 30
+  floor 15: 60
+  floor 20: 110
+  floor 25: 180
+  floor 30: 300
+  beyond 30: +120 per 5 floors
+// Shape: superlinear, so depth keeps paying as the gate escalates across
+// prestige cycles. If Swift is underused, raise THESE (and warden rare drops),
+// never its combat — see game-design.md.
+
+## Survival forecast
+
+Drives the Cautious stop rule, and becomes the shrine UI in P1 (game-design.md).
+Reported as "fraction of the hp pool expected to remain after the next stretch",
+which is what a player actually wants to read at a shrine.
+
+horizon_floors: 3            // one shrine interval // INITIAL GUESS
+forced_fights_per_floor: 1.5 // fights even a careful hero cannot dodge // INITIAL GUESS
+rest_recovery_per_floor: 0.5 // fraction of max hp regained by resting // INITIAL GUESS
+
+forecast = clamp(1 - expected_damage / hp_budget, 0, 1), where
+  expected_damage = horizon_floors * forced_fights_per_floor *
+                    expected_cost_to_kill(hero at full hp, median monster at the
+                    DEEPEST floor of the horizon) * cautious_variance_margin
+  hp_budget       = max_hp * (1 + rest_recovery_per_floor * horizon_floors)
+
+cautious_stop_below: 0.35 // INITIAL GUESS — at a shrine, if the forecast is
+// below this, Cautious banks everything and makes camp: run over, hero alive,
+// haul kept. Tune against the "Cautious deaths under 10%" target. Raising it
+// makes Cautious quit earlier (safer, shallower, poorer).
 
 ## Chests
 
@@ -150,6 +223,10 @@ base_rate: 0.002 per qualifying kill/chest
 attunement: each qualifying kill adds +0.00005 to rate, multiplied by
 current greed stacks (min 1). Resets on relic drop.
 // sources and effects: see game-design.md; exact effect numbers TBD in P3.
+// CONFIRMED 2026-08-05: relics are the unique gear tier. They drop from Balrog
+// wins, occupy equipment slots, and persist through prestige forever. Common
+// and rare gear resets at prestige except one kept piece:
+gear_kept_through_prestige: 1 piece (player's choice) // INITIAL GUESS
 
 ## Wardens
 
