@@ -44,7 +44,7 @@
 
 <div class="controls">
   <label>Seed <input id="seed" type="number" value="12345"></label>
-  <label>Auto-bank every <input id="autobank" type="number" value="2" min="1" style="width:60px"> shrines</label>
+  <label>Auto-bank every <input id="autobank" type="number" value="1" min="1" style="width:60px"> shrines</label>
   <button id="runBtn">Run chronicles</button>
   <button id="batchBtn">Run 1,000-run batch</button>
   <span id="progress"></span>
@@ -164,6 +164,15 @@ function renderChronicles() {
 
 // ---- batch mode: the P0 balance testbed -----------------------------------
 
+// Let the progress line repaint without setTimeout, which browsers clamp to
+// ~1/sec in a background tab (that clamp, not the sim, was the batch's cost).
+const yieldToUi = () =>
+  new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => resolve();
+    ch.port2.postMessage(0);
+  });
+
 const mean = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
 const median = (a) => {
   if (!a.length) return 0;
@@ -194,7 +203,7 @@ async function runBatch() {
       });
       if (i % 50 === 49) {
         progress.textContent = `${d.label} ${i + 1}/${N}…`;
-        await new Promise((r) => setTimeout(r));
+        await yieldToUi();
       }
     }
     results[d.id] = rows;
@@ -245,7 +254,8 @@ function renderBatch(results, N) {
       First-death target (floors 6–12): greedy ${g.medDeathFloor || '—'}, swift ${s.medDeathFloor || '—'}, cautious ${c.medDeathFloor || '—'}<br>
     ${mark(swiftRatio >= 1.2 && swiftRatio <= 1.45)} Swift depth vs Greedy: ×${fmt(swiftRatio, 2)} (target ~×1.3 per ration)<br>
     ${mark(greedKillRatio >= 1.35)} Greedy kills vs Swift: ×${fmt(greedKillRatio, 2)} · gold ×${fmt(greedGoldRatio, 2)} (target ~×1.5)<br>
-    ${mark(cautiousDeathRatio <= 0.34)} Cautious deaths vs Greedy: ×${fmt(cautiousDeathRatio, 2)} (target under ×0.33)
+    ${mark(cautiousDeathRatio <= 0.34)} Cautious deaths vs Greedy: ×${fmt(cautiousDeathRatio, 2)} (target under ×0.33)<br>
+    ${mark(g.avgBanked > 0)} Greedy banks anything at all: ${fmt(g.avgBanked)} avg banked value
   </div>`;
 
   // Death-floor histograms

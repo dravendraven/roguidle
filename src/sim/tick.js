@@ -39,6 +39,7 @@ export function initRun(seed) {
     path: null,
     pathKey: null,
     restSession: null,
+    retreating: false,
     stats: {
       kills: 0,
       eliteKills: 0,
@@ -145,6 +146,7 @@ function enterFloor(state, orders, events) {
   state.forceStairs = false;
   state.path = null;
   state.pathKey = null;
+  state.retreating = false;
 
   const byType = {};
   let elites = 0;

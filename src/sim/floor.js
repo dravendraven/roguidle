@@ -86,8 +86,21 @@ export function makeFloor(runSeed, depth, greedStacks) {
   );
   const band = B.floors.spawn_weights.find((b) => depth <= b.up_to_depth);
   const monsters = [];
+  // Spread spawns out (monster_min_spacing) so the hero rarely fights a pack.
+  const spacedTile = () => {
+    for (let tries = 0; tries < 40; tries++) {
+      const t = takeTile(4); // never right on top of the hero
+      if (!t) return null;
+      if (monsters.some((m) => dist(m, t) < B.floors.monster_min_spacing)) {
+        t.taken = false; // hand the tile back for other placements
+        continue;
+      }
+      return t;
+    }
+    return takeTile(4); // give up on spacing rather than under-populate
+  };
   for (let i = 0; i < count; i++) {
-    const t = takeTile(4); // never right on top of the hero
+    const t = spacedTile();
     if (!t) break;
     const type = pickWeighted(rng, Object.entries(band.weights));
     const base = B.monsters[type];

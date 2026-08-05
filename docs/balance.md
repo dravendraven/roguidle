@@ -21,13 +21,31 @@ Tuning targets are listed so future tuning sessions know what "good" means.
 
 ## Hero
 
-start_hp: 10
+start_hp: 14
+// was 10, then 12; with a damage cap of 4, two bad rolls erase 8 hp — floor
+// 1-3 deaths were pure dice variance until the pool could absorb them
 hp_per_level: 2
-xp_curve: level_n_requires = 10 * n * n
-// interpretation: advancing FROM level n TO n+1 costs 10*n*n xp.
+xp_curve: level_n_requires = 10 * n
+// was 10*n*n; batch 2 showed heroes stuck at level 2 while depth scaled up —
+// the hero must be able to outgrow the early dungeon, and a kill-fed curve
+// is what makes Greedy's extra kills mean something.
+// interpretation: advancing FROM level n TO n+1 costs 10*n xp.
 level_up_heal: full   // INITIAL GUESS — leveling restores hp to max
-start_rations: 20
-ration_cost_per_floor: { greedy: 1.5, swift: 0.8, cautious: 1.2 }
+start_rations: 12
+// was 20; batch 3 showed the fresh-hero death wall sits around floors 8-13,
+// so 20 rations meant nobody ever lived to camp. 12 = greedy dry at floor 8,
+// cautious at 10, swift at 15 — the larder runs out before the wall for the
+// careful doctrines, which is what makes "cautious rarely dies" true.
+ration_cost_per_floor: { greedy: 1.5, swift: 0.8, cautious: 2.0 }
+// cautious was 1.2. Measured: cautious spends ~1900 ticks per run to greedy's
+// ~900 — twice the time on each floor, for FEWER rations. That made careful
+// play strictly better: it out-lived greedy AND out-earned it, then pushed
+// deeper into the death wall and died just as often (x1.27 greedy's rate).
+// Rations are time as much as food, so the slow doctrine now pays for the
+// clock it burns. This is pillar 3 ("safe play has a hard ceiling") expressed
+// as a number: cautious is now depth-limited to ~6 floors and rarely dies,
+// greedy reaches ~8 and dies often, swift reaches ~11 and dies most.
+// OWNER: this reverses the doc's original ordering, so flagging it loudly.
 
 ## Combat (Rogule-style dice)
 
@@ -36,7 +54,9 @@ defense_roll: 1d6 + armor_bonus
 damage_on_hit: 1 + max(0, attack_roll - defense_roll) // capped at 4
 // interpretation (owner-approved 2026-08-05): no separate miss roll — every
 // swing lands; a losing attack roll still deals the base 1 damage.
-flee_check_cautious: flee if hp < 40% max_hp
+flee_check_cautious: flee if hp < 65% max_hp
+// was 40%, then 50%; two capped hits can erase ~55% of an early hp pool, so
+// fleeing at half was fleeing too late (batches 1 and 5)
 
 ## Monsters (biome 1: caves, floors 1-10)
 
@@ -55,28 +75,67 @@ elite_gold_mult: x3 // INITIAL GUESS
 
 floor_width: 32    // INITIAL GUESS
 floor_height: 20   // INITIAL GUESS
-monsters_per_floor: 4 + floor(depth / 3), capped at 9 // INITIAL GUESS
+monsters_per_floor: 3 + floor(depth / 3), capped at 8
+// was 4 + depth/3 cap 9; tuned after batch 1 (100% deaths, median floor 2)
+monster_min_spacing: 3 // min distance between monster spawns // INITIAL GUESS
+// batch 4: clustered spawns meant 2-3 monsters per brawl; ~30% of heroes of
+// EVERY doctrine died on floors 1-5 to gang-ups
 spawn_weights: // INITIAL GUESS — relative weights per depth band
   floors_1_3:    { rat: 5, bat: 3, spider: 1, wolf: 0 }
   floors_4_6:    { rat: 3, bat: 3, spider: 2, wolf: 1 }
-  floors_7_plus: { rat: 1, bat: 2, spider: 3, wolf: 3 }
+  floors_7_plus: { rat: 1, bat: 2, spider: 3, wolf: 2 } // wolf 3→2, batch 2
 gold_piles_per_floor: 0-2, amount 3-8 each // INITIAL GUESS
 biome_scaling: monster hp/atk/def/xp/gold x1.6 per biome past the first,
   biome = ceil(depth / 10) // INITIAL GUESS placeholder until P3 real biomes
 
 ## Hero AI and healing (P0 additions)
 
-rest_ticks_per_hp: 3  // resting heals 1 hp per 3 ticks // INITIAL GUESS
-rest_below_frac: { greedy: 0.50, swift: 0.25, cautious: 0.60 } // INITIAL GUESS
-rest_until_frac: { greedy: 0.80, swift: 0.50, cautious: 0.90 } // INITIAL GUESS
-cautious_reserve_frac: 0.40 // fight only if expected hp cost leaves this // INITIAL GUESS
-chase_radius: 6  // monsters chase the hero within this range // INITIAL GUESS
+rest_ticks_per_hp: 2  // resting heals 1 hp per 2 ticks (was 3, batch 1)
+rest_below_frac: { greedy: 0.70, swift: 0.65, cautious: 0.70 } // (batch 3: swift 0.40→0.65)
+rest_until_frac: { greedy: 0.90, swift: 0.90, cautious: 0.90 } // (batch 3: swift 0.60→0.90)
+// swift rests generously: resting costs time, never rations, and rations are
+// swift's slack resource — diving at level 1 on low hp was killing it at floor 5
+cautious_reserve_frac: 0.55 // fight only if expected hp cost leaves this
+// was 0.40 (batch 4): a "favorable" wolf at 12 hp still lost to one bad
+// dice streak — cautious must price in variance, not just expectation
+cautious_variance_margin: 1.6 // INITIAL GUESS — multiplies the expected cost
+// of a fight before cautious accepts it. Damage swings 1-4 against a 14 hp
+// pool, so planning on the average loses every fight that lands on the tail;
+// a traced death went 11 -> 8 -> 4 -> 2 -> dead in a fight priced at ~3 hp.
+retreat_is_committed: true // batch 9 trace: the hero stepped back, lost
+// "adjacent", turned around, walked into the same monster and ate a free hit,
+// forever. Once retreating it stays retreating until nothing is in chase range.
+cautious_detour_tiles: 6 // INITIAL GUESS — how far cautious will step off its
+// route to the stairs for a fight or some loot. Cautious does not hunt: batch
+// 7 showed it spending 2097 ticks/run to greedy's 909, and time-on-floor is
+// exposure. Lower = safer and poorer.
+// TRIED AND REVERTED (batch 8): retreating by pathing to the stairs. It drags
+// a wounded hero through unexplored floor and made deaths worse (50%->85%).
+// Retreat stays a local step-away from ADJACENT threats only.
+// 120 of 145 cautious deaths were 1-on-1 at ~2 hp with one adjacent monster.
+// (A "camp when outmatched" rule was tried and removed: it fired on 0 of 1622
+// floors, because a full-hp hero can always beat SOMETHING in biomes 1-2.)
+flee_prefers_open_tiles: true // dead-end tie-break in the fallback step
+cautious_sneak_pathing: true // batch 5: cautious routes around the aggro
+// radius of unfavorable monsters when a safe route to its target exists;
+// this is what "only favorable fights" means on a map with leashed monsters
+cautious_engage_frac: 0.80 // was 0.70 (batch 4) — when an unfavorable monster is
+// already adjacent (e.g. blocking a corridor), commit to trading blows only
+// at/above this hp fraction; below it, retreat, rest, and re-engage.
+// Monsters never heal, so hit-and-run always wins eventually.
+chase_radius: 3  // monsters chase the hero within this range
+// was 6; batch 1 showed pack pulls killing everyone by floor 2-3
 leash_radius: 8  // monsters give up beyond this from their spawn // INITIAL GUESS
 max_ticks_per_floor: 800 // failsafe: hero force-marches to stairs // INITIAL GUESS
 
 ## Shrines and greed
 
 shrine_every_n_floors: 5
+// FINDING (batch 10, unresolved): on a 12-ration larder only Swift reaches a
+// SECOND shrine (floor 10), so a standing order of "auto-bank every 2 shrines"
+// means Greedy and Cautious never bank at all and lose everything on death.
+// The bank-or-push decision barely exists this early. Either the first shrine
+// comes sooner than floor 5, or the starting larder is bigger. Owner's call.
 greed_bonus_per_stack: 0.25   // renown multiplier: 1 + 0.25 * stacks
 gilded_chest_min_stacks: 2
 

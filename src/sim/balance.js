@@ -3,12 +3,14 @@
 
 export const BALANCE = {
   hero: {
-    start_hp: 10,
+    start_hp: 14,
     hp_per_level: 2,
-    // advancing FROM level n TO n+1 costs 10*n*n xp
-    xp_to_next: (level) => 10 * level * level,
-    start_rations: 20,
-    ration_cost_per_floor: { greedy: 1.5, swift: 0.8, cautious: 1.2 },
+    // advancing FROM level n TO n+1 costs 10*n xp
+    xp_to_next: (level) => 10 * level,
+    start_rations: 12,
+    // cautious costs MORE than greedy: it spends ~2x the ticks per floor, and
+    // rations are the clock as much as the larder (see docs/balance.md)
+    ration_cost_per_floor: { greedy: 1.5, swift: 0.8, cautious: 2.0 },
   },
 
   combat: {
@@ -30,13 +32,14 @@ export const BALANCE = {
   floors: {
     width: 32,
     height: 20,
-    monsters_base: 4,
+    monsters_base: 3,
     monsters_per_depth_div: 3, // + floor(depth / 3) extra monsters
-    monsters_max: 9,
+    monsters_max: 8,
+    monster_min_spacing: 3,
     spawn_weights: [
       { up_to_depth: 3,        weights: { rat: 5, bat: 3, spider: 1, wolf: 0 } },
       { up_to_depth: 6,        weights: { rat: 3, bat: 3, spider: 2, wolf: 1 } },
-      { up_to_depth: Infinity, weights: { rat: 1, bat: 2, spider: 3, wolf: 3 } },
+      { up_to_depth: Infinity, weights: { rat: 1, bat: 2, spider: 3, wolf: 2 } },
     ],
     gold_piles: [0, 2],
     gold_per_pile: [3, 8],
@@ -44,13 +47,16 @@ export const BALANCE = {
   },
 
   ai: {
-    chase_radius: 6,
+    chase_radius: 3,
     leash_radius: 8,
-    rest_ticks_per_hp: 3,
-    rest_below_frac: { greedy: 0.5, swift: 0.25, cautious: 0.6 },
-    rest_until_frac: { greedy: 0.8, swift: 0.5, cautious: 0.9 },
-    cautious_flee_frac: 0.4,
-    cautious_reserve_frac: 0.4,
+    rest_ticks_per_hp: 2,
+    rest_below_frac: { greedy: 0.7, swift: 0.65, cautious: 0.7 },
+    rest_until_frac: { greedy: 0.9, swift: 0.9, cautious: 0.9 },
+    cautious_flee_frac: 0.65,
+    cautious_reserve_frac: 0.55,
+    cautious_engage_frac: 0.8,
+    cautious_detour_tiles: 6,
+    cautious_variance_margin: 1.6,
   },
 
   shrines: {
