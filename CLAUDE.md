@@ -1,59 +1,30 @@
 # Roguidle
 
 An idle roguelike inspired by rogule.com. The hero delves an emoji dungeon
-by itself; the player makes a few high-impact decisions daily.
-
-## Before any work
-Read, in this order:
-1. docs/game-design.md — what the game is. Design questions get answered
-   here or by asking the owner, never by inventing defaults.
-2. docs/tech-design.md — architecture, state shape, build phases.
-3. docs/balance.md — the single source of truth for ALL tuning numbers.
-
-Only build what the current phase requires. Do not add features from future
-phases or from the "Explicitly OUT of MVP" list in game-design.md, even if
-they seem easy or are mentioned in the docs.
-
-**Current phase: P1** (update this line manually as phases complete)
-
-P1 goal: something playable and persistent on a phone. Ugly is fine.
-Balance is FROZEN during P1 — see the freeze note at the top of
-docs/balance.md before changing any number.
-
-The watchable descent (emoji grid, live tick view) was pulled forward from P2
-at the owner's request on 2026-08-05, ahead of the rest of P1. Still not
-built, and still not to be built without asking: Daily Gate, share card,
-wardens, relics, embers.
-
-To run the sim: `python tools/dev-server.py` then open
-http://localhost:8137/run-sim.html — that server disables browser caching, so
-edits to src/sim/*.js actually take effect. Opening the file directly will not
-work (ES modules need http://).
+by itself; the player makes decisions when it matters.
 
 ## Hard rules
-- Vanilla JavaScript, ES modules. No frameworks, no npm, no build step,
-  no TypeScript. Must run by opening HTML files / GitHub Pages as-is.
+- Vanilla JS, ES modules. No frameworks, no npm, no build step, no
+  TypeScript. Must run by opening HTML files / GitHub Pages as-is.
 - ROT.js from CDN is the only external library.
-- Math.random() is BANNED in src/sim/ and src/game/. All randomness goes
-  through the seeded rng (src/sim/rng.js). Determinism is sacred: same
-  seed + same decisions = same result, always.
-- tick() stays a pure function: no DOM, no Date.now(), no storage access
-  inside src/sim/.
-- No balance value may be hardcoded in logic files. Numbers live in
-  docs/balance.md and are mirrored in one loadable data module. If a
-  needed number is missing from balance.md, add it there first with an
-  // INITIAL GUESS comment, then use it.
-- localStorage saves are versioned; any save-format change needs a
-  migration in storage.js.
+- Math.random() is BANNED in src/sim/ and src/game/ — seeded rng only
+  (src/sim/rng.js). Same seed + same decisions = same result, always.
+- tick() stays pure: no DOM, no Date.now(), no storage inside src/sim/.
+- No balance value hardcoded in logic files. Numbers live in
+  src/sim/balance.js — one file, no mirror in the docs.
+- Saves are versioned; any format change needs a migration in
+  src/game/state.js.
 
 ## Workflow
-- Small commits with clear messages after each working change.
-- After building something, briefly explain what was created and where,
-  in plain language (the maintainer is not a professional developer).
-- If a request conflicts with the tech design or game design, say so
-  before coding.
-- When tuning: change balance.md, rerun the batch simulator, report the
-  before/after distributions. Never tune by feel alone.
+- Small commits, clear messages.
+- Tune by playing: change a number, open the game, see if it's better.
+  run-sim.html's batch simulator is an occasional tool, not required.
+- Explain what changed in plain language when done (not a pro dev).
+- If a request conflicts with docs/notes/, say so before coding.
+
+## Running it
+`python tools/dev-server.py` then open http://localhost:8137/index.html —
+disables browser caching so edits to src/*.js actually take effect.
 
 ## Owner context
 Solo maintainer, basic coding knowledge, builds via Claude Code.
