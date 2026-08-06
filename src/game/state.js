@@ -106,6 +106,14 @@ export function absorbEvents(save, events) {
   if (save.chronicle.length > CHRONICLE_LIMIT) {
     save.chronicle = save.chronicle.slice(-CHRONICLE_LIMIT);
   }
+  // A long absence can kill a great many bosses. Opening chests is a manual
+  // choice, so an uncapped queue turns coming back into paperwork — keep the
+  // deepest ones, since those carry the best gear.
+  const cap = BALANCE.offline.max_pending_chests;
+  if (save.pendingChests.length > cap) {
+    save.pendingChests.sort((a, b) => (b.depth || 0) - (a.depth || 0));
+    save.pendingChests = save.pendingChests.slice(0, cap);
+  }
   return save;
 }
 

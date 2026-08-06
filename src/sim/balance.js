@@ -3,7 +3,7 @@
 
 export const BALANCE = {
   hero: {
-    start_hp: 14,
+    start_hp: 20,
     hp_per_level: 2,
     // advancing FROM level n TO n+1 costs 10*n xp
     xp_to_next: (level) => 10 * level,
@@ -21,10 +21,10 @@ export const BALANCE = {
 
   monsters: {
     // gold: [min, max] dropped on death
-    rat:    { hp: 2, atk: 0, def: 0, xp: 1, gold: [0, 2] },
-    bat:    { hp: 2, atk: 0, def: 1, xp: 1, gold: [0, 2] },
-    wolf:   { hp: 4, atk: 1, def: 1, xp: 3, gold: [2, 5] },
-    spider: { hp: 3, atk: 1, def: 0, xp: 2, gold: [1, 3] },
+    rat:    { hp: 4, atk: 0, def: 0, xp: 1, gold: [0, 2] },
+    bat:    { hp: 4, atk: 0, def: 1, xp: 1, gold: [0, 2] },
+    wolf:   { hp: 7, atk: 1, def: 1, xp: 3, gold: [2, 5] },
+    spider: { hp: 5, atk: 1, def: 0, xp: 2, gold: [1, 3] },
   },
 
   elite: { hp_mult: 3, atk_bonus: 1, xp_mult: 4, gold_mult: 3, spawn_rate: 0.04, min_depth: 4 },
@@ -32,7 +32,7 @@ export const BALANCE = {
   // One small boss per floor, standing on the stairs. Killing it is the only
   // way down, and it is what drops the reward chest.
   boss: {
-    hp: (d) => 4 + Math.round(d * 1.5),
+    hp: (d) => 7 + Math.round(d * 2.5),
     atk: (d) => Math.floor(d / 4),
     def: (d) => Math.floor(d / 6),
     xp: (d) => 5 + d * 2,
@@ -81,7 +81,7 @@ export const BALANCE = {
   ai: {
     chase_radius: 3,
     leash_radius: 8,
-    rest_ticks_per_hp: 2,
+    rest_ticks_per_hp: 1,
     rest_below_frac: { greedy: 0.7, swift: 0.65, cautious: 0.7 },
     rest_until_frac: { greedy: 0.9, swift: 0.9, cautious: 1.0 },
     cautious_flee_frac: 0.65,
@@ -122,12 +122,15 @@ export const BALANCE = {
 
   sim: {
     max_ticks_per_floor: 800,
-    tick_ms_watchable: 400,
+    // The ONE pace dial. There is no separate offline rate: time away is
+    // replayed as exactly these ticks, so this sets both how fast the grid
+    // moves and how much happens while you are gone.
+    tick_ms_watchable: 3000,
   },
 
   offline: {
-    minutes_per_floor: 120,
     max_hours: 24,
     camp_rations_per_hour: 1.0,
+    max_pending_chests: 12,
   },
 };

@@ -85,9 +85,10 @@ player can switch mid-run. Programmable routes are post-MVP (game-design.md).
 
 ## Hero
 
-start_hp: 14
-// was 10, then 12; with a damage cap of 4, two bad rolls erase 8 hp — floor
-// 1-3 deaths were pure dice variance until the pool could absorb them
+start_hp: 20
+// was 10, 12, then 14; raised with the 2026-08-05 "longer fights" decision —
+// monster hp nearly doubled, so the hero eats ~2x hits per fight and needed
+// the pool to match. With a damage cap of 4, two bad rolls erase 8 hp.
 hp_per_level: 2
 xp_curve: level_n_requires = 10 * n
 // was 10*n*n; batch 2 showed heroes stuck at level 2 while depth scaled up —
@@ -124,10 +125,17 @@ flee_check_cautious: flee if hp < 65% max_hp
 
 ## Monsters (biome 1: caves, floors 1-10)
 
-rat:    { hp: 2, atk: 0, def: 0, xp: 1 }
-bat:    { hp: 2, atk: 0, def: 1, xp: 1 }
-wolf:   { hp: 4, atk: 1, def: 1, xp: 3 }
-spider: { hp: 3, atk: 1, def: 0, xp: 2 }
+rat:    { hp: 4, atk: 0, def: 0, xp: 1 }
+bat:    { hp: 4, atk: 0, def: 1, xp: 1 }
+wolf:   { hp: 7, atk: 1, def: 1, xp: 3 }
+spider: { hp: 5, atk: 1, def: 0, xp: 2 }
+// hp roughly doubled (was 2/2/4/3) — owner decision 2026-08-05: fights should
+// run 50-100% longer so a kill reads as a fight on the grid. Median damaging
+// swings per kill went ~1-2 to ~3. Compensated hero-side (start_hp 14->20,
+// rest_ticks_per_hp 2->1) to keep the early game at the same survivability:
+// 120-account check lands median death floor 3, floor-1 deaths 19/120,
+// versus 4 and 17/120 before the change. atk/def/gold untouched, so floor
+// income and the gear economy hold.
 elite_multiplier: { hp: x3, atk: +1, xp: x4, spawn_rate: 0.04 }
 elite_min_depth: 4 // INITIAL GUESS — no elites on floors 1-3. An elite on
 // floor 1 (9 hp, atk 2) simply kills a 14 hp level-1 hero, which is why the
@@ -157,7 +165,8 @@ biome_scaling: monster hp/atk/def/xp/gold x1.6 per biome past the first,
 
 ## Hero AI and healing (P0 additions)
 
-rest_ticks_per_hp: 2  // resting heals 1 hp per 2 ticks (was 3, batch 1)
+rest_ticks_per_hp: 1  // was 3, then 2; 1 hp per tick since the longer-fights
+// change — recovery between fights has to keep pace with doubled fight damage
 rest_below_frac: { greedy: 0.70, swift: 0.65, cautious: 0.70 } // (batch 3: swift 0.40→0.65)
 rest_until_frac: { greedy: 0.90, swift: 0.90, cautious: 1.00 }
 // (batch 3: swift 0.60→0.90; batch 12: cautious 0.90→1.00, worth 2pp of death
@@ -203,8 +212,8 @@ New mechanics, not retunes of frozen values. Scope cut toward "simple and
 playable": one small boss per floor gates the stairs, and its chest is the
 only source of gear.
 
-boss_per_floor: // INITIAL GUESS
-  hp:  4 + round(depth * 1.5)
+boss_per_floor:
+  hp:  7 + round(depth * 2.5) // was 4 + 1.5d; longer-fights decision
   atk: floor(depth / 4)   // 0 on floors 1-3
   def: floor(depth / 6)
 // First numbers tried were hp 6+2d / atk 1+floor(d/4) and every one of 120
@@ -373,30 +382,33 @@ embers = floor(max_floor * 1.0 + warden_kills * 15 + banked_gold / 100)
 dungeon_size: fixed, ~5 floors equivalent, from date seed
 renown_multiplier_by_doctrine: { greedy: 1.5, swift: 1.2, cautious: 1.0 }
 
-## Offline
+## Offline — ONE CLOCK (owner decision 2026-08-05)
 
-tick_ms_watchable: 400
-offline_resolution: per-floor aggregate (see tech-design 4.1)
+There is no offline rate and no online rate. Time away is replayed as exactly
+the ticks that would have run with the page open: "idle" means the game kept
+playing, not that it waited for you. offline_minutes_per_floor is GONE, and
+so is the "next floor in Xh" wait it created.
+
+tick_ms_watchable: 3000 // was 400
+// The single pace dial for the whole game — it sets both how fast the grid
+// moves and how much happens while you are away (elapsed / tick_ms ticks).
+// At 400ms a three-hour absence burned 143 floors and killed 79 heroes.
+// Verified bit-identical: three hours fast-forwarded in one call equals the
+// same three hours ticked one at a time, down to the rng state.
+
 max_offline_hours_uncapped_by_larder: 24
+// Time past the cap is discarded, not queued — the cap limits benefit, it
+// does not delay it.
 
-offline_minutes_per_floor: 120 // INITIAL GUESS — NEW value, required to build
-// P1 at all, not a retune of a frozen one. Derived from the stated target
-// "24h offline on a full early-game larder: rations run out around hour
-// 14-18": a 12-ration larder at greedy's 1.5/floor is 8 floors, and 8 floors
-// x 2h lands at 16h, inside the band. Swift stretches to ~30h, Cautious ~12h.
-// NOTE: this makes offline advance ~130x slower than watchable mode would at
-// 400ms/tick. tech-design section 9 already waves off tab-open advantage in a
-// client-only game, but the two rates should be reconciled before P2 ships
-// the watchable view.
+max_pending_chests: 12 // deepest kept
+// Opening chests is a manual choice, so an uncapped queue turns coming back
+// into paperwork: a three-hour absence once left 147 waiting.
 
-camp_rations_per_hour: 1.0 // INITIAL GUESS — OWNER DECISION NEEDED.
-// The docs say the hero "camps and waits" at zero rations and that this is
-// never a punishment, but nothing anywhere says how rations come BACK. With
-// no answer, a P1 account delves ~8 floors and then stops forever, which is
-// simply not playable. Simplest reading that respects the docs: waiting in
-// camp is foraging, so rations tick back up to the larder cap and delving
-// resumes. Replace this with the real mechanic when you decide it (loot? a
-// camp building? a daily reset? all are currently out of MVP scope).
+camp_rations_per_hour: 1.0 // INITIAL GUESS — OWNER DECISION STILL NEEDED.
+// Nothing in the docs says how rations come BACK. Running dry no longer ends
+// a run: the hero camps in place and forages rations back tick by tick,
+// which is the reading that matches "the hero camps and waits ... never a
+// punishment". Replace with the real mechanic when you decide it.
 
 ## Observed, retune after P1
 

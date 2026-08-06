@@ -4,7 +4,7 @@
 import { loadOrCreate, save as writeSave, saveUnlessChangedExternally, clear } from './storage.js';
 import { absorbEvents, resetRun } from './game/state.js';
 import { rollChestOptions, describeGear, equipmentBonuses, SLOTS } from './game/gear.js';
-import { fastForward, runFromSave, applyRunToSave, runSeedFor, atFloorBoundary } from './sim/offline.js';
+import { fastForward, runFromSave, applyRunToSave, runSeedFor } from './sim/offline.js';
 import { makeRng } from './sim/rng.js';
 import { tick } from './sim/tick.js';
 import { BALANCE } from './sim/balance.js';
@@ -18,10 +18,7 @@ let rng = null;
 let timer = null;
 let feed = [];
 let openChest = null;  // the chest whose three tiers are on screen
-let awayLine = '';     // one-line summary of the catch-up
-
-const floorCostMs = () => BALANCE.offline.minutes_per_floor * 60000;
-const earnedMs = () => Date.now() - state.lastSeenAt;
+let awayLine = '';     // one-line summary of the most recent catch-up
 
 function boot() {
   const now = Date.now();
@@ -30,23 +27,30 @@ function boot() {
   const { state: loaded } = loadOrCreate(now, seed);
   state = loaded;
 
-  // Settle time away immediately — the grid is the whole screen now, so the
-  // hero should be standing on the right floor when it appears.
+  settleAwayTime();
+  beginLiveRun();
+}
+
+// Catch the save up on however much real time has passed since it was last
+// touched — the exact same ticks the live loop would have run, no faster and
+// no slower. There is no "offline speed": the game was simply playing itself
+// the whole time, and this is where we find out what happened.
+function settleAwayTime() {
+  const now = Date.now();
   const { events, report } = fastForward(state, now);
   absorbEvents(state, events);
-  if (report.died) {
-    state.run.deaths += 1;
-    resetRun(state, now);
-  }
   writeSave(state);
 
-  if (report.floors > 0) {
+  if (report.ticks > 0) {
     const kills = events.filter((e) => e.type === 'monster_killed' || e.type === 'boss_killed').length;
-    awayLine = `While away: ${report.floors} floor${report.floors === 1 ? '' : 's'}, ${kills} kills` +
-      (report.died ? ' — and a death. A new hero takes the pack.' : '.');
+    const bits = [`${report.floors} floor${report.floors === 1 ? '' : 's'}`, `${kills} kills`];
+    if (report.deaths) bits.push(`${report.deaths} death${report.deaths === 1 ? '' : 's'}`);
+    if (report.stopped) bits.push('retired safely at least once');
+    awayLine = `While away: ${bits.join(', ')}.`;
+  } else {
+    awayLine = '';
   }
-
-  beginLiveRun();
+  return report;
 }
 
 /* ---- the live run ------------------------------------------------------ */
@@ -74,13 +78,6 @@ function stopTimer() {
 function step() {
   if (!run) return;
 
-  // The next descent waits until the clock has earned it — watching animates
-  // time, it never buys more of it.
-  if (atFloorBoundary(run) && earnedMs() < floorCostMs()) {
-    repaint();
-    return;
-  }
-
   const orders = { doctrine: state.run.doctrine, autoBankEvery: 0 };
   const prevDepth = run.depth;
   const out = tick(run, orders, rng);
@@ -94,11 +91,7 @@ function step() {
   }
   if (feed.length > 30) feed = feed.slice(-30);
 
-  if (run.depth > prevDepth) {
-    state.lastSeenAt += floorCostMs();
-    if (state.lastSeenAt > Date.now()) state.lastSeenAt = Date.now();
-    mustSave = true;
-  }
+  if (run.depth > prevDepth) mustSave = true;
   if (mustSave) persistRun();
 
   if (run.ended) {
@@ -106,16 +99,19 @@ function step() {
     persistRun();
     if (died) {
       state.run.deaths += 1;
-      resetRun(state, Date.now());
-      writeSave(state);
       feed.push({ cls: 'bad', text: '💀 the hero is gone. Another takes the pack…' });
     } else {
-      feed.push({ cls: 'bad', text: '⛺ the hero camps. Rations will refill with time.' });
+      // The only other ending is the cautious stop rule: a deliberate,
+      // successful retirement, not a punishment.
+      feed.push({ cls: 'good', text: '⛺ read the odds, banked everything, and retired — alive.' });
     }
+    // The sim only ends the run; starting the next hero is this layer's job,
+    // same as offline.js does for a catch-up.
+    resetRun(state, Date.now());
+    writeSave(state);
     run = null;
     stopTimer();
-    // A short beat before the next hero walks in.
-    setTimeout(() => beginLiveRun(), died ? 2500 : 60000);
+    setTimeout(() => beginLiveRun(), died ? 2500 : 2500);
   }
   repaint();
 }
@@ -130,6 +126,9 @@ function repaint() {
 function persistRun() {
   if (!run) return;
   applyRunToSave(state, run, rng);
+  // The game has been ticking in real time up to this instant, so there is
+  // nothing left for a future catch-up to replay.
+  state.lastSeenAt = Date.now();
   writeSave(state);
 }
 
@@ -214,19 +213,11 @@ function chooseGear(index) {
 
 /* ---- the one screen ---------------------------------------------------- */
 
-function untilNextFloor() {
-  const left = floorCostMs() - earnedMs();
-  if (left <= 0) return null;
-  const mins = Math.ceil(left / 60000);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
-
 function paint() {
   const h = run ? run.hero : state.hero;
   const depth = run ? run.depth : state.hero.floor;
   const carried = run ? run.carried : state.hero.carried;
-  const waiting = run && atFloorBoundary(run) && earnedMs() < floorCostMs() ? untilNextFloor() : null;
+  const camping = !!(run && run.camping);
 
   app.innerHTML = `
     <div class="res">
@@ -238,7 +229,7 @@ function paint() {
     </div>
 
     ${awayLine ? `<p class="notice">${awayLine}</p>` : ''}
-    ${waiting ? `<p class="notice">⏳ Floor cleared. The hero rests at the stairs — next floor in <b>${waiting}</b>.</p>` : ''}
+    ${camping ? `<p class="notice">🏕️ The larder is empty. The hero rests and forages — rations refill over time, same pace whether you watch or not.</p>` : ''}
 
     ${renderFloor(run)}
 
@@ -292,11 +283,22 @@ window.addEventListener('pagehide', () => {
   if (state) saveUnlessChangedExternally(state);
 });
 
-// A locked phone should not tick in the background; the clock keeps earning
-// floors either way, and boot settles them on return.
+// A hidden tab (locked phone, switched app) stops ticking locally, but the
+// game did not pause: on return, catch up on the real time that passed and
+// rebuild the live run from the result, so backgrounding never loses time
+// or gets a free pause. This is the same path boot() uses.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopTimer();
-  else if (run && !timer) startTimer();
+  if (document.hidden) {
+    stopTimer();
+    if (run) {
+      applyRunToSave(state, run, rng);
+      state.lastSeenAt = Date.now();
+      writeSave(state);
+    }
+  } else if (state) {
+    settleAwayTime();
+    beginLiveRun();
+  }
 });
 
 boot();

@@ -46,6 +46,7 @@ export function initRun(seed) {
     pathKey: null,
     restSession: null,
     retreating: false,
+    camping: false, // out of rations; resting in place, not a terminal state
     stats: {
       kills: 0,
       eliteKills: 0,
@@ -124,21 +125,28 @@ export function tick(state, orders, rng) {
   return { state, events };
 }
 
-// Entering a floor: pay rations (or camp), resolve the shrine if this is a
-// shrine floor, then generate the new floor.
+// Entering a floor: pay rations (or camp in place), resolve the shrine if
+// this is a shrine floor, then generate the new floor.
 function enterFloor(state, orders, events) {
   const B = BALANCE;
   const cost =
     B.hero.ration_cost_per_floor[state.doctrine] * (1 - (state.hero.rationSave || 0));
   if (state.hero.rations < cost) {
-    // Camping is not dying. Only DEATH loses what the hero carries
-    // (game-design.md), so a hero who runs dry walks its haul home.
-    bankNow(state, events);
-    state.ended = true;
-    state.endReason = 'camped';
-    events.push(ev(state, 'out_of_rations', {}));
+    // Camping is not a punishment and not an ending (game-design.md: "the
+    // hero camps and waits ... never a punishment"). The hero rests exactly
+    // where it stands and regains rations one tick at a time, at the same
+    // rate whether the run is watched live or caught up after being away —
+    // there is no separate offline clock, only ticks.
+    if (!state.camping) events.push(ev(state, 'out_of_rations', {}));
+    state.camping = true;
+    const gainPerTick = B.offline.camp_rations_per_hour * (B.sim.tick_ms_watchable / 3600000);
+    state.hero.rations = Math.min(
+      B.hero.start_rations,
+      Math.round((state.hero.rations + gainPerTick) * 10000) / 10000
+    );
     return;
   }
+  state.camping = false;
   state.hero.rations = Math.round((state.hero.rations - cost) * 100) / 100;
 
   state.depth += 1;

@@ -1,21 +1,19 @@
-// Fast-forward: turn elapsed real time into floors delved.
+// Fast-forward: replay elapsed real time as the same ticks that would have
+// run had the page stayed open and been watched the whole time. There is no
+// separate "offline rate" — this drives the exact tick() function the live
+// loop uses, the same number of times BALANCE.sim.tick_ms_watchable divides
+// into the elapsed time. Idle means the game kept playing, not that it
+// waited for you: a death or a voluntary cautious stop during a catch-up
+// starts a fresh hero and keeps consuming the remaining budget, exactly as
+// watched play does when a run ends.
 //
 // Pure like the rest of src/sim — `now` is passed in, never read from the
 // clock, and nothing here touches storage or the DOM.
-//
-// DEVIATION FROM tech-design 4.1, flagged deliberately. The design calls for
-// resolving offline floors as aggregate rolls, because replaying 400ms ticks
-// for 24 hours would be 216,000 ticks of CPU. That premise does not hold:
-// rations cap a run at roughly 8-15 floors, so a full 24-hour catch-up is
-// about 2,500 ticks — single-digit milliseconds. So this drives the REAL
-// tick() a floor at a time instead. Same rulebook, so fast-forward and the
-// watchable view cannot disagree, which deletes the "fast-forward drift"
-// risk in tech-design section 9 outright. Revisit only if larders ever grow
-// enough that one catch-up spans thousands of floors.
 import { BALANCE } from './balance.js';
 import { initRun, tick, placeOnFloor } from './tick.js';
 import { makeRng, hashSeeds } from './rng.js';
 import { equipmentBonuses } from '../game/gear.js';
+import { resetRun } from '../game/state.js';
 
 export function runSeedFor(save) {
   return hashSeeds(save.accountSeed, save.run.number);
@@ -74,117 +72,74 @@ export function applyRunToSave(save, run, rng) {
   save.run.shrinesSinceBank = run.shrinesSinceBank;
   save.run.maxFloor = Math.max(save.run.maxFloor, run.stats.maxDepth);
   save.meta.maxDepthEver = Math.max(save.meta.maxDepthEver, run.stats.maxDepth);
-  // run.renown counts only what this catch-up earned — runFromSave never
+  // run.renown counts only what this stretch earned — runFromSave never
   // restores it — so adding it each time accumulates without double counting.
   save.meta.renown += run.renown;
   return save;
 }
 
-// How much wall-clock time one floor of delving costs.
-const floorMs = () => BALANCE.offline.minutes_per_floor * 60000;
-
-// The one place a run is allowed to pause: standing on the stairs of a floor
-// it has finished, waiting for the clock to pay for the next descent. Both
-// the instant catch-up and the watched view stop here, which is what makes
-// them produce the same hero — exported so neither can drift from the other.
-export function atFloorBoundary(run) {
-  return !!run && !!run.floor && run.hero.x === run.floor.stairs.x && run.hero.y === run.floor.stairs.y;
-}
-
-// Play the current floor out to its stairs without paying for a descent.
-// The floor was already bought; this is just the rest of it happening.
-export function settleToBoundary(run, orders, rng, events) {
-  let guard = 0;
-  const limit = BALANCE.sim.max_ticks_per_floor * 4;
-  while (!run.ended && !atFloorBoundary(run) && guard++ < limit) {
-    const out = tick(run, orders, rng);
-    for (const e of out.events) events.push(e);
-  }
-}
-
-// Resolve one floor: run real ticks until the hero descends or the run ends.
-// Returns true when a floor was actually completed.
-function resolveOneFloor(run, orders, rng, events) {
-  const startDepth = run.depth;
-  const guardLimit = BALANCE.sim.max_ticks_per_floor * 4;
-  let guard = 0;
-  while (!run.ended && run.depth === startDepth && guard++ < guardLimit) {
-    const out = tick(run, orders, rng);
-    for (const e of out.events) events.push(e);
-  }
-  return run.depth > startDepth;
-}
-
-// Advance `save` by however much time has passed. Returns a report; the
-// caller decides what to do about a death.
+// Advance `save` by however much real time has passed, one tick at a time.
+// Returns a report describing what happened; the caller only needs to know
+// whether to show a summary — deaths and restarts are already applied.
 export function fastForward(save, now) {
-  const B = BALANCE.offline;
-  const events = [];
-  const capMs = B.max_hours * 3600000;
+  const B = BALANCE;
+  const tickMs = B.sim.tick_ms_watchable;
+  const capMs = B.offline.max_hours * 3600000;
   const rawElapsed = Math.max(0, now - save.lastSeenAt);
-  let budget = Math.min(rawElapsed, capMs);
+  const cappedElapsed = Math.min(rawElapsed, capMs);
+  const totalTicks = Math.floor(cappedElapsed / tickMs);
+  let ticksLeft = totalTicks;
 
-  const run = runFromSave(save);
-  const rng = makeRng(runSeedFor(save));
-  if (save.run.rngState !== null && save.run.rngState !== undefined) {
-    rng.setState(save.run.rngState);
-  }
-  const orders = { doctrine: save.run.doctrine, autoBankEvery: save.run.standingOrder };
+  const events = [];
+  let deaths = 0;
+  let stopped = false;
+  let lives = 0;
+  const guardLives = 1000; // sanity cap on chained hero restarts per catch-up
 
-  const report = {
-    elapsedMs: rawElapsed,
-    cappedMs: budget,
-    cappedByLimit: rawElapsed > capMs,
-    floors: 0,
-    campedHours: 0,
-    died: false,
-    stopped: false,
-  };
-
-  const perFloor = floorMs();
-  const cost = () => BALANCE.hero.ration_cost_per_floor[run.doctrine];
-
-  while (budget >= perFloor && !run.ended) {
-    // Out of rations: the hero camps and forages. Never a punishment, just
-    // slower. (camp_rations_per_hour is an OWNER DECISION — see balance.md.)
-    if (run.hero.rations < cost()) {
-      const needed = cost() - run.hero.rations;
-      const hoursNeeded = needed / B.camp_rations_per_hour;
-      const campMs = hoursNeeded * 3600000;
-      if (campMs > budget) {
-        // Not enough time to finish foraging; bank the partial recovery.
-        const hours = budget / 3600000;
-        run.hero.rations = round2(run.hero.rations + hours * B.camp_rations_per_hour);
-        report.campedHours += hours;
-        budget = 0;
-        break;
-      }
-      run.hero.rations = round2(
-        Math.min(BALANCE.hero.start_rations, run.hero.rations + hoursNeeded * B.camp_rations_per_hour)
-      );
-      report.campedHours += hoursNeeded;
-      budget -= campMs;
-      continue;
+  while (ticksLeft > 0 && lives++ < guardLives) {
+    const run = runFromSave(save);
+    const rng = makeRng(runSeedFor(save));
+    if (save.run.rngState !== null && save.run.rngState !== undefined) {
+      rng.setState(save.run.rngState);
     }
+    const orders = { doctrine: save.run.doctrine, autoBankEvery: save.run.standingOrder };
 
-    if (!resolveOneFloor(run, orders, rng, events)) break; // died or wedged
-    report.floors += 1;
-    budget -= perFloor;
+    while (ticksLeft > 0 && !run.ended) {
+      const out = tick(run, orders, rng);
+      for (const e of out.events) events.push(e);
+      ticksLeft--;
+    }
+    applyRunToSave(save, run, rng);
+
+    if (run.endReason === 'died') {
+      deaths++;
+      save.run.deaths++;
+      resetRun(save, now);
+    } else if (run.endReason === 'stopped') {
+      stopped = true;
+      resetRun(save, now);
+    } else {
+      break; // budget ran out mid-run; nothing more to chain
+    }
   }
 
-  // Leave the hero exactly where the watched view would leave it.
-  settleToBoundary(run, orders, rng, events);
+  const ticksConsumed = totalTicks - Math.max(0, ticksLeft);
+  const remainderMs = cappedElapsed - ticksConsumed * tickMs;
+  // Any time beyond the cap is discarded, not banked for later — the offline
+  // cap limits benefit, it does not delay it (game-design.md: "soft offline
+  // cap, never a punishment", not "a queue").
+  save.lastSeenAt = now - remainderMs;
 
-  report.died = run.endReason === 'died';
-  report.stopped = run.endReason === 'stopped';
-
-  applyRunToSave(save, run, rng);
-  // Unspent time stays on the clock rather than evaporating.
-  save.lastSeenAt = now - budget;
-
-  return { save, events, report, run };
-}
-
-function round2(n) {
-  return Math.round(n * 100) / 100;
+  return {
+    save,
+    events,
+    report: {
+      elapsedMs: rawElapsed,
+      cappedByLimit: rawElapsed > capMs,
+      ticks: ticksConsumed,
+      floors: events.filter((e) => e.type === 'floor_entered').length,
+      deaths,
+      stopped,
+    },
+  };
 }
