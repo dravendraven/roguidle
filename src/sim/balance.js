@@ -8,8 +8,10 @@ export const BALANCE = {
     // advancing FROM level n TO n+1 costs 10*n xp
     xp_to_next: (level) => 10 * level,
     start_rations: 12,
-    // cautious costs MORE than greedy: it spends ~2x the ticks per floor, and
-    // rations are the clock as much as the larder (see docs/balance.md)
+    // Rations are the time currency, not just food: whatever spends more
+    // ticks per floor pays more rations for it. Cautious ticks ~2x longer
+    // per floor than greedy, so without this cost gap careful play strictly
+    // dominated — it out-lived and out-earned greedy while dying just as often.
     ration_cost_per_floor: { greedy: 1.5, swift: 0.8, cautious: 2.0 },
   },
 
@@ -27,6 +29,8 @@ export const BALANCE = {
     spider: { hp: 5, atk: 1, def: 0, xp: 2, gold: [1, 3] },
   },
 
+  // No elites before floor 4: a fresh level-1 hero simply loses to one, and
+  // the first boss (which drops the only gear) has to be beatable bare-handed.
   elite: { hp_mult: 3, atk_bonus: 1, xp_mult: 4, gold_mult: 3, spawn_rate: 0.04, min_depth: 4 },
 
   // One small boss per floor, standing on the stairs. Killing it is the only
@@ -79,6 +83,8 @@ export const BALANCE = {
   },
 
   ai: {
+    // Kept tight (was 6): wider aggro let packs gang up on floors 1-5 and
+    // killed every doctrine there.
     chase_radius: 3,
     leash_radius: 8,
     rest_ticks_per_hp: 1,

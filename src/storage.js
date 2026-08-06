@@ -1,5 +1,5 @@
-// localStorage persistence: load, save, migrate. Export/import lands here
-// too (P1 step 5). Nothing in src/sim touches this file.
+// localStorage persistence: load, save, migrate. Export/import (not built
+// yet) would live here too. Nothing in src/sim touches this file.
 import { SAVE_VERSION, migrate, newSave } from './game/state.js';
 
 const KEY = 'roguidle:save';
