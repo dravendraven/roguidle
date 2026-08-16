@@ -1,12 +1,9 @@
 // THE pure simulation step: tick(state, orders, rng) -> { state, events }.
 // One hero action per call, then the monsters respond. No DOM, no
-// Date.now(), no storage in here — hard rule from CLAUDE.md.
-//
-// orders: { doctrine: 'greedy'|'swift'|'cautious', autoBankEvery: N }
-// rng:    the run's combat/loot stream (floors derive their own seeds).
+// Date.now(), no storage access inside src/sim/ — hard rule from CLAUDE.md.
 import { BALANCE } from './balance.js';
-import { makeFloor, dist, adjacent4, threatProfileAt } from './floor.js';
-import { attackDamage, survivalForecast } from './combat.js';
+import { makeFloor, dist, adjacent4 } from './floor.js';
+import { attackDamage } from './combat.js';
 import { decideAction } from './doctrine.js';
 import { randInt } from './rng.js';
 
@@ -32,20 +29,13 @@ export function initRun(seed) {
       x: 0,
       y: 0,
     },
-    carried: { gold: 0, chests: { common: 0, rare: 0, gilded: 0 }, greedStacks: 0 },
-    banked: { gold: 0, value: 0, chests: 0 },
-    renown: 0,
-    depthRenownPaid: [], // thresholds already claimed this run
-    doctrine: null, // the doctrine actually in force; orders can only change
-    // it at camp or at a shrine, so the tick latches it here
-    shrinesSinceBank: 0,
+    carried: { gold: 0 },
     floor: null,
     floorTicks: 0,
     forceStairs: false,
     path: null,
     pathKey: null,
     restSession: null,
-    retreating: false,
     camping: false, // out of rations; resting in place, not a terminal state
     stats: {
       kills: 0,
@@ -55,9 +45,6 @@ export function initRun(seed) {
       damageTaken: 0,
       restTicks: 0,
       maxDepth: 0,
-      shrinesSeen: 0,
-      banks: 0,
-      depthRenown: 0,
       bossKills: 0,
     },
   };
@@ -69,18 +56,12 @@ export function tick(state, orders, rng) {
   const events = [];
   if (state.ended) return { state, events };
 
-  // Doctrine switching is free and instant, but only AT camp or a shrine.
-  // Between those the run is committed, so the tick reads its own latched
-  // copy rather than whatever the player has since picked in the UI.
-  if (state.doctrine === null) state.doctrine = orders.doctrine;
-  const inForce = { ...orders, doctrine: state.doctrine };
-
   if (state.depth === 0) {
-    enterFloor(state, orders, events);
+    enterFloor(state, events);
     if (state.ended) return { state, events };
   }
 
-  const action = decideAction(state, inForce);
+  const action = decideAction(state);
 
   // Close out a rest session the moment the hero stops resting.
   if (action.type !== 'rest' && state.restSession) {
@@ -105,7 +86,7 @@ export function tick(state, orders, rng) {
       doRest(state);
       break;
     case 'descend':
-      enterFloor(state, orders, events);
+      enterFloor(state, events);
       break;
     case 'wait':
       break;
@@ -115,7 +96,7 @@ export function tick(state, orders, rng) {
 
   if (!state.ended) {
     state.floorTicks++;
-    if (state.floorTicks > BALANCE.sim.max_ticks_per_floor && !state.forceStairs) {
+    if (state.floorTicks > BALANCE.ai.max_ticks_per_floor && !state.forceStairs) {
       state.forceStairs = true;
       events.push(ev(state, 'stalled', {}));
     }
@@ -125,15 +106,13 @@ export function tick(state, orders, rng) {
   return { state, events };
 }
 
-// Entering a floor: pay rations (or camp in place), resolve the shrine if
-// this is a shrine floor, then generate the new floor.
-function enterFloor(state, orders, events) {
+// Entering a floor: pay rations (or camp in place), generate the new floor.
+function enterFloor(state, events) {
   const B = BALANCE;
-  const cost =
-    B.hero.ration_cost_per_floor[state.doctrine] * (1 - (state.hero.rationSave || 0));
+  const cost = B.hero.ration_cost_per_floor * (1 - (state.hero.rationSave || 0));
   if (state.hero.rations < cost) {
-    // Camping is not a punishment and not an ending (game-design.md: "the
-    // hero camps and waits ... never a punishment"). The hero rests exactly
+    // Camping is not a punishment and not an ending (docs/notes: "the hero
+    // camps and waits ... never a punishment"). The hero rests exactly
     // where it stands and regains rations one tick at a time, at the same
     // rate whether the run is watched live or caught up after being away —
     // there is no separate offline clock, only ticks.
@@ -151,42 +130,6 @@ function enterFloor(state, orders, events) {
 
   state.depth += 1;
   state.stats.maxDepth = state.depth;
-  payDepthRenown(state, events);
-
-  // Shrine at the entrance of every Nth floor: switch doctrine, then bank or push.
-  if (state.depth >= B.shrines.every_n_floors && state.depth % B.shrines.every_n_floors === 0) {
-    state.stats.shrinesSeen++;
-    events.push(ev(state, 'shrine_reached', {}));
-
-    // Switching is free and instant at a shrine (game-design.md).
-    if (orders.doctrine && orders.doctrine !== state.doctrine) {
-      events.push(ev(state, 'doctrine_switched', { from: state.doctrine, to: orders.doctrine }));
-      state.doctrine = orders.doctrine;
-      state.path = null;
-      state.pathKey = null;
-    }
-
-    // The Cautious stop rule: read the odds for the stretch ahead, and if they
-    // are bad, bank everything and make camp. Run over, hero alive, haul kept.
-    const ahead = threatProfileAt(state.depth + B.forecast.horizon_floors);
-    const forecast = survivalForecast(state.hero, ahead);
-    state.lastForecast = forecast;
-    if (state.doctrine === 'cautious' && forecast < B.forecast.cautious_stop_below) {
-      bankNow(state, events);
-      state.ended = true;
-      state.endReason = 'stopped';
-      events.push(ev(state, 'made_camp', { forecast: Math.round(forecast * 100) }));
-      return;
-    }
-
-    state.shrinesSinceBank++;
-    if (orders.autoBankEvery && state.shrinesSinceBank >= orders.autoBankEvery) {
-      bankNow(state, events);
-    } else {
-      state.carried.greedStacks++;
-      events.push(ev(state, 'pushed_on', { stacks: state.carried.greedStacks }));
-    }
-  }
 
   placeOnFloor(state);
 
@@ -203,62 +146,14 @@ function enterFloor(state, orders, events) {
 // out of enterFloor so a saved run can be resumed onto its floor WITHOUT
 // paying rations for it a second time (offline.js).
 export function placeOnFloor(state) {
-  state.floor = makeFloor(state.seed, state.depth, state.carried.greedStacks);
+  state.floor = makeFloor(state.seed, state.depth);
   state.hero.x = state.floor.heroStart.x;
   state.hero.y = state.floor.heroStart.y;
   state.floorTicks = 0;
   state.forceStairs = false;
   state.path = null;
   state.pathKey = null;
-  state.retreating = false;
   state.restSession = null;
-}
-
-// Depth Renown: paid the first time a run passes each threshold, banked on
-// the spot. No shrine needed and no later death takes it back — this is how a
-// doctrine that skips the loot still scores (game-design.md).
-function payDepthRenown(state, events) {
-  const R = BALANCE.renown;
-  const claim = (floorNum, amount) => {
-    if (state.depth < floorNum || state.depthRenownPaid.includes(floorNum)) return;
-    state.depthRenownPaid.push(floorNum);
-    state.renown += amount;
-    state.stats.depthRenown += amount;
-    events.push(ev(state, 'depth_renown', { floor: floorNum, amount }));
-  };
-  for (const [floorNum, amount] of R.depth_thresholds) claim(floorNum, amount);
-  for (let f = 35; f <= state.depth; f += 5) claim(f, R.depth_beyond_30_per_5);
-}
-
-function bankNow(state, events) {
-  const B = BALANCE;
-  const c = state.carried;
-  const chestCount = c.chests.common + c.chests.rare + c.chests.gilded;
-  const mult = 1 + B.shrines.greed_bonus_per_stack * c.greedStacks;
-  if (c.gold > 0 || chestCount > 0) {
-    const value = Math.round(c.gold * mult * 10) / 10;
-    state.banked.gold += c.gold;
-    state.banked.value += value;
-    state.banked.chests += chestCount;
-    state.renown += value; // banked value IS Renown (game-design.md)
-    state.stats.banks++;
-    events.push(
-      ev(state, 'banked', {
-        gold: c.gold,
-        chests: chestCount,
-        // tiers travel with the event so the chest queue can be rebuilt from
-        // events alone — banking is what sends a chest home to be opened
-        tiers: { ...c.chests },
-        stacks: c.greedStacks,
-        mult,
-        value,
-      })
-    );
-  }
-  c.gold = 0;
-  c.chests = { common: 0, rare: 0, gilded: 0 };
-  c.greedStacks = 0;
-  state.shrinesSinceBank = 0;
 }
 
 function doAttack(state, id, rng, events) {
@@ -296,28 +191,22 @@ function gainXp(state, xp, events) {
     hero.xp -= B.hero.xp_to_next(hero.level);
     hero.level++;
     hero.maxHp += B.hero.hp_per_level;
-    hero.hp = hero.maxHp; // level_up_heal: full (balance.md)
+    if (B.hero.level_up_heal) hero.hp = hero.maxHp;
     events.push(ev(state, 'level_up', { level: hero.level, maxHp: hero.maxHp }));
   }
 }
 
+// Scenery finds (rogule.com: items hidden under a rock or a plant) grant
+// gold on the spot — no queue, no decision, just a small immediate reward.
 function doPickup(state, events) {
   const { hero, floor } = state;
-  const chest = floor.chests.find((c) => c.x === hero.x && c.y === hero.y);
-  if (chest) {
-    floor.chests = floor.chests.filter((c) => c !== chest);
-    state.carried.chests[chest.tier]++;
-    events.push(ev(state, 'chest_found', { tier: chest.tier }));
-    return;
-  }
-  const pile = floor.piles.find((p) => p.x === hero.x && p.y === hero.y);
-  if (pile) {
-    floor.piles = floor.piles.filter((p) => p !== pile);
-    const amount = Math.round(pile.amount * (state.hero.goldMult || 1));
-    state.carried.gold += amount;
-    state.stats.goldCollected += amount;
-    events.push(ev(state, 'gold_found', { amount }));
-  }
+  const find = floor.finds.find((f) => f.x === hero.x && f.y === hero.y);
+  if (!find) return;
+  floor.finds = floor.finds.filter((f) => f !== find);
+  const amount = Math.round(find.value * (state.hero.goldMult || 1));
+  state.carried.gold += amount;
+  state.stats.goldCollected += amount;
+  events.push(ev(state, 'gold_found', { amount, emoji: find.emoji }));
 }
 
 function doRest(state) {
@@ -331,8 +220,8 @@ function doRest(state) {
 }
 
 // After the hero acts, every monster gets a turn: swing if adjacent, chase if
-// the hero is near (and inside its leash), otherwise stay put. No dice are
-// used for movement — chasing is deterministic.
+// the hero is within ITS OWN aggro radius (and inside its leash), otherwise
+// stay put. No dice are used for movement — chasing is deterministic.
 function monstersAct(state, rng, events) {
   const B = BALANCE;
   const hero = state.hero;
@@ -348,15 +237,11 @@ function monstersAct(state, rng, events) {
         state.alive = false;
         state.ended = true;
         state.endReason = 'died';
-        const chestCount =
-          state.carried.chests.common + state.carried.chests.rare + state.carried.chests.gilded;
         events.push(
           ev(state, 'hero_died', {
             killer: m.type,
             elite: m.elite,
             lostGold: state.carried.gold,
-            lostChests: chestCount,
-            stacks: state.carried.greedStacks,
           })
         );
         return;
@@ -365,7 +250,7 @@ function monstersAct(state, rng, events) {
     }
 
     const spawn = { x: m.spawnX, y: m.spawnY };
-    if (dist(m, hero) > B.ai.chase_radius) continue;
+    if (dist(m, hero) > (m.radius || 0)) continue;
     if (dist(m, spawn) >= B.ai.leash_radius) continue;
 
     // Greedy step toward the hero: bigger axis first, other axis as fallback.

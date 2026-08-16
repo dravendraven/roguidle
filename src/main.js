@@ -45,7 +45,6 @@ function settleAwayTime() {
     const kills = events.filter((e) => e.type === 'monster_killed' || e.type === 'boss_killed').length;
     const bits = [`${report.floors} floor${report.floors === 1 ? '' : 's'}`, `${kills} kills`];
     if (report.deaths) bits.push(`${report.deaths} death${report.deaths === 1 ? '' : 's'}`);
-    if (report.stopped) bits.push('retired safely at least once');
     awayLine = `While away: ${bits.join(', ')}.`;
   } else {
     awayLine = '';
@@ -78,9 +77,8 @@ function stopTimer() {
 function step() {
   if (!run) return;
 
-  const orders = { doctrine: state.run.doctrine, autoBankEvery: 0 };
   const prevDepth = run.depth;
-  const out = tick(run, orders, rng);
+  const out = tick(run, null, rng);
 
   absorbEvents(state, out.events);
   let mustSave = false;
@@ -95,30 +93,22 @@ function step() {
   if (mustSave) persistRun();
 
   if (run.ended) {
-    const died = run.endReason === 'died';
+    // The only ending left is death — camping never ends a run any more.
     persistRun();
-    if (died) {
-      state.run.deaths += 1;
-      feed.push({ cls: 'bad', text: '💀 the hero is gone. Another takes the pack…' });
-    } else {
-      // The only other ending is the cautious stop rule: a deliberate,
-      // successful retirement, not a punishment.
-      feed.push({ cls: 'good', text: '⛺ read the odds, banked everything, and retired — alive.' });
-    }
-    // The sim only ends the run; starting the next hero is this layer's job,
-    // same as offline.js does for a catch-up.
+    state.run.deaths += 1;
+    feed.push({ cls: 'bad', text: '💀 the hero is gone. Another takes the pack…' });
     resetRun(state, Date.now());
     writeSave(state);
     run = null;
     stopTimer();
-    setTimeout(() => beginLiveRun(), died ? 2500 : 2500);
+    setTimeout(() => beginLiveRun(), 2500);
   }
   repaint();
 }
 
-// The sim ticks 2.5x a second; redrawing the whole screen at that rate would
-// yank the chest menu out from under a tap. While a chest is open the screen
-// holds still and the sim runs silently behind it.
+// The sim ticks a few times a second; redrawing the whole screen at that
+// rate would yank the chest menu out from under a tap. While a chest is
+// open the screen holds still and the sim runs silently behind it.
 function repaint() {
   if (!openChest) paint();
 }

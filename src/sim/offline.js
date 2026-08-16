@@ -3,9 +3,8 @@
 // separate "offline rate" — this drives the exact tick() function the live
 // loop uses, the same number of times BALANCE.sim.tick_ms_watchable divides
 // into the elapsed time. Idle means the game kept playing, not that it
-// waited for you: a death or a voluntary cautious stop during a catch-up
-// starts a fresh hero and keeps consuming the remaining budget, exactly as
-// watched play does when a run ends.
+// waited for you: a death starts a fresh hero and keeps consuming the
+// remaining budget, exactly as watched play does.
 //
 // Pure like the rest of src/sim — `now` is passed in, never read from the
 // clock, and nothing here touches storage or the DOM.
@@ -25,7 +24,6 @@ export function runSeedFor(save) {
 export function runFromSave(save) {
   const run = initRun(runSeedFor(save));
   const h = save.hero;
-  run.doctrine = save.run.doctrine;
   run.depth = h.floor;
   // Equipped gear is what the combat dice actually read.
   const bonus = equipmentBonuses(h.equipment);
@@ -38,13 +36,7 @@ export function runFromSave(save) {
   run.hero.level = h.level;
   run.hero.xp = h.xp;
   run.hero.rations = h.rations;
-  run.carried = {
-    gold: h.carried.gold,
-    chests: { ...h.carried.chests },
-    greedStacks: h.carried.greedStacks,
-  };
-  run.depthRenownPaid = [...(save.run.depthRenownPaid || [])];
-  run.shrinesSinceBank = save.run.shrinesSinceBank || 0;
+  run.carried = { gold: h.carried.gold };
   run.stats.maxDepth = h.floor;
   placeOnFloor(run);
   return run;
@@ -62,19 +54,9 @@ export function applyRunToSave(save, run, rng) {
   h.xp = run.hero.xp;
   h.rations = run.hero.rations;
   h.floor = run.depth;
-  h.carried = {
-    gold: run.carried.gold,
-    chests: { ...run.carried.chests },
-    greedStacks: run.carried.greedStacks,
-  };
+  h.carried = { gold: run.carried.gold };
   save.run.rngState = rng.getState();
-  save.run.depthRenownPaid = [...run.depthRenownPaid];
-  save.run.shrinesSinceBank = run.shrinesSinceBank;
-  save.run.maxFloor = Math.max(save.run.maxFloor, run.stats.maxDepth);
   save.meta.maxDepthEver = Math.max(save.meta.maxDepthEver, run.stats.maxDepth);
-  // run.renown counts only what this stretch earned — runFromSave never
-  // restores it — so adding it each time accumulates without double counting.
-  save.meta.renown += run.renown;
   return save;
 }
 
@@ -92,7 +74,6 @@ export function fastForward(save, now) {
 
   const events = [];
   let deaths = 0;
-  let stopped = false;
   let lives = 0;
   const guardLives = 1000; // sanity cap on chained hero restarts per catch-up
 
@@ -102,10 +83,9 @@ export function fastForward(save, now) {
     if (save.run.rngState !== null && save.run.rngState !== undefined) {
       rng.setState(save.run.rngState);
     }
-    const orders = { doctrine: save.run.doctrine, autoBankEvery: save.run.standingOrder };
 
     while (ticksLeft > 0 && !run.ended) {
-      const out = tick(run, orders, rng);
+      const out = tick(run, null, rng);
       for (const e of out.events) events.push(e);
       ticksLeft--;
     }
@@ -115,9 +95,6 @@ export function fastForward(save, now) {
       deaths++;
       save.run.deaths++;
       resetRun(save, now);
-    } else if (run.endReason === 'stopped') {
-      stopped = true;
-      resetRun(save, now);
     } else {
       break; // budget ran out mid-run; nothing more to chain
     }
@@ -126,8 +103,7 @@ export function fastForward(save, now) {
   const ticksConsumed = totalTicks - Math.max(0, ticksLeft);
   const remainderMs = cappedElapsed - ticksConsumed * tickMs;
   // Any time beyond the cap is discarded, not banked for later — the offline
-  // cap limits benefit, it does not delay it (game-design.md: "soft offline
-  // cap, never a punishment", not "a queue").
+  // cap limits benefit, it does not delay it.
   save.lastSeenAt = now - remainderMs;
 
   return {
@@ -139,7 +115,6 @@ export function fastForward(save, now) {
       ticks: ticksConsumed,
       floors: events.filter((e) => e.type === 'floor_entered').length,
       deaths,
-      stopped,
     },
   };
 }

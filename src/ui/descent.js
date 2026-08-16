@@ -1,13 +1,13 @@
 // The watchable descent: a CSS grid of <span>s, one emoji per tile.
-// No canvas, exactly as tech-design section 8 calls for. Rendering only —
-// this file never advances the simulation, it just draws whatever state it
-// is handed.
+// No canvas. Rendering only — this file never advances the simulation, it
+// just draws whatever state it is handed.
 
-const MONSTER_EMOJI = { rat: '🐀', bat: '🦇', spider: '🕷️', wolf: '🐺' };
-const CHEST_EMOJI = { common: '📦', rare: '🎁', gilded: '🏆' };
+const MONSTER_EMOJI = {
+  rat: '🐀', bat: '🦇', spider: '🕷️', ghost: '👻', boar: '🐗', wolf: '🐺',
+  ogre: '🧌', zombie: '🧟', vampire: '🧛', genie: '🧞', trex: '🦖', dragon: '🐉',
+};
 const HERO = '🧙';
 const STAIRS = '🕳️';
-const GOLD = '🪙';
 
 // How much of the floor to show. A full 32x20 floor at phone width leaves
 // ~11px cells, which is unreadable, so the view is a window that follows the
@@ -37,10 +37,8 @@ export function renderFloor(run) {
 
   const monsterAt = new Map();
   for (const m of f.monsters) monsterAt.set(key(m.x, m.y), m);
-  const chestAt = new Map();
-  for (const c of f.chests) chestAt.set(key(c.x, c.y), c);
-  const goldAt = new Map();
-  for (const g of f.piles) goldAt.set(key(g.x, g.y), g);
+  const findAt = new Map();
+  for (const p of f.finds) findAt.set(key(p.x, p.y), p);
 
   let cells = '';
   for (let y = y0; y < y0 + VIEW_H; y++) {
@@ -61,13 +59,9 @@ export function renderFloor(run) {
         cells += `<span class="t mon${cls}">${bar(m.hp, m.maxHp, 'foe')}${face}</span>`;
         continue;
       }
-      const c = chestAt.get(k);
-      if (c) {
-        cells += `<span class="t">${CHEST_EMOJI[c.tier]}</span>`;
-        continue;
-      }
-      if (goldAt.has(k)) {
-        cells += `<span class="t">${GOLD}</span>`;
+      const p = findAt.get(k);
+      if (p) {
+        cells += `<span class="t">${p.emoji}</span>`;
         continue;
       }
       if (f.stairs.x === x && f.stairs.y === y) {
@@ -94,29 +88,15 @@ export function eventLine(e) {
     case 'boss_killed':
       return { cls: 'good', text: `👑 ${e.emoji} the floor boss falls! +${e.gold}🪙 and a reward chest` };
     case 'gold_found':
-      return { text: `🪙 picked up ${e.amount} gold` };
-    case 'chest_found':
-      return { text: `${CHEST_EMOJI[e.tier]} a ${e.tier} chest, sealed` };
+      return { text: `${e.emoji || '🪙'} found ${e.amount} gold` };
     case 'level_up':
       return { cls: 'good', text: `⬆️ level ${e.level}! max hp ${e.maxHp}` };
     case 'rested':
       return { text: `💤 rested ${e.from}→${e.to} hp` };
-    case 'shrine_reached':
-      return { cls: 'big', text: `⛩️ a shrine at the mouth of floor ${e.depth}` };
-    case 'pushed_on':
-      return { text: `🔥 pushed past the shrine — greed ×${(1 + 0.15 * e.stacks).toFixed(2)}` };
-    case 'banked':
-      return { cls: 'good', text: `🏦 banked ${e.gold}🪙${e.chests ? ' + ' + e.chests + ' chest(s)' : ''} → ${Math.round(e.value)} Renown` };
-    case 'depth_renown':
-      return { cls: 'good', text: `🏅 past floor ${e.floor} — ${e.amount} Renown banked` };
-    case 'doctrine_switched':
-      return { cls: 'big', text: `🔄 doctrine: ${e.from} → ${e.to}` };
     case 'hero_died':
       return { cls: 'bad', text: `💀 slain by ${e.elite ? 'an elite ' : ''}${MONSTER_EMOJI[e.killer]} on floor ${e.depth}` };
     case 'out_of_rations':
       return { cls: 'bad', text: `⛺ the larder is empty — making camp` };
-    case 'made_camp':
-      return { cls: 'bad', text: `⛺ odds ahead ${e.forecast}% — banked everything and camped` };
     case 'stalled':
       return { text: `🕳️ lost the thread — heading for the stairs` };
     default:

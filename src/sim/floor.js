@@ -1,11 +1,16 @@
 // Seeded floor generation, wrapping ROT.js (the only external library).
 // Every floor derives its seed from (runSeed, depth), so the same account
-// seed always produces the same dungeon — identically for every doctrine.
+// seed always produces the same dungeon.
 import * as ROT from 'https://cdn.jsdelivr.net/npm/rot-js@2.2.0/+esm';
 import { BALANCE } from './balance.js';
 import { makeRng, hashSeeds, randInt, chance, pickWeighted } from './rng.js';
 
 const key = (x, y) => x + ',' + y;
+
+// Bestiary ordered by danger tier — index i is BALANCE.monsters[NAME].tier.
+const CREATURE_BY_TIER = Object.entries(BALANCE.monsters)
+  .sort((a, b) => a[1].tier - b[1].tier)
+  .map(([name]) => name);
 
 // Chebyshev distance (diagonals count as 1) — used for aggro ranges.
 export function dist(a, b) {
@@ -17,55 +22,20 @@ export function adjacent4(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) === 1;
 }
 
-export function monsterCountAt(depth) {
-  const B = BALANCE.floors;
-  return Math.min(B.monsters_max, B.monsters_base + Math.floor(depth / B.monsters_per_depth_div));
+// Danger tier a spawn tile targets: rises with depth, and — taken from
+// rogule.com's generator — with how far the tile sits from the hero's
+// start, so one floor has a safe edge and a dangerous core rather than
+// every tile being equally tough.
+function targetTier(depth, distFrac, rng) {
+  const F = BALANCE.floors;
+  const base = depth / F.depth_tier_span;
+  const spread = (distFrac - 0.5) * 2 * F.distance_spread;
+  const jitter = randInt(rng, -F.tier_jitter, F.tier_jitter);
+  const tier = Math.round(base + spread + jitter);
+  return Math.max(0, Math.min(CREATURE_BY_TIER.length - 1, tier));
 }
 
-// The spawn-weighted average inhabitant of a floor, with biome scaling
-// applied. No randomness: this is what the survival forecast reasons about
-// when the hero asks "what is waiting for me down there".
-export function typicalMonsterAt(depth) {
-  const B = BALANCE;
-  const band = B.floors.spawn_weights.find((b) => depth <= b.up_to_depth);
-  const scale = Math.pow(B.floors.biome_scale_per_biome, Math.ceil(depth / 10) - 1);
-  let total = 0;
-  const avg = { hp: 0, atk: 0, def: 0 };
-  for (const [type, w] of Object.entries(band.weights)) {
-    if (!w) continue;
-    total += w;
-    avg.hp += B.monsters[type].hp * w;
-    avg.atk += B.monsters[type].atk * w;
-    avg.def += B.monsters[type].def * w;
-  }
-  return {
-    hp: (avg.hp / total) * scale,
-    atk: (avg.atk / total) * scale,
-    def: (avg.def / total) * scale,
-  };
-}
-
-// What a floor at this depth actually threatens the hero with: the average
-// inhabitant, plus the elite tail. Forecasting on the average alone reads a
-// comfortable 0.65 on exactly the floors where careful heroes die, because
-// what kills them is the 4%-spawn elite, not the median rat.
-export function threatProfileAt(depth) {
-  const B = BALANCE;
-  const typical = typicalMonsterAt(depth);
-  const elite = {
-    hp: typical.hp * B.elite.hp_mult,
-    atk: typical.atk + B.elite.atk_bonus,
-    def: typical.def,
-  };
-  const spawns = depth < B.elite.min_depth ? 0 : B.elite.spawn_rate;
-  return {
-    typical,
-    elite,
-    eliteChance: 1 - Math.pow(1 - spawns, monsterCountAt(depth)),
-  };
-}
-
-export function makeFloor(runSeed, depth, greedStacks) {
+export function makeFloor(runSeed, depth) {
   const B = BALANCE;
   const w = B.floors.width;
   const h = B.floors.height;
@@ -105,6 +75,7 @@ export function makeFloor(runSeed, depth, greedStacks) {
       stairs = c;
     }
   }
+  const maxDist = Math.max(w, h);
 
   // Tiles available for placing things (never the start or the stairs).
   const openTiles = [];
@@ -125,14 +96,12 @@ export function makeFloor(runSeed, depth, greedStacks) {
     return null;
   };
 
-  // Monsters — count and mix scale with depth, stats with biome.
-  const biome = Math.ceil(depth / 10);
-  const scale = Math.pow(B.floors.biome_scale_per_biome, biome - 1);
+  // Monsters — count scales with depth; each one's TYPE is picked by how
+  // far its tile sits from the entrance (see targetTier).
   const count = Math.min(
     B.floors.monsters_max,
     B.floors.monsters_base + Math.floor(depth / B.floors.monsters_per_depth_div)
   );
-  const band = B.floors.spawn_weights.find((b) => depth <= b.up_to_depth);
   const monsters = [];
   // Spread spawns out (monster_min_spacing) so the hero rarely fights a pack.
   const spacedTile = () => {
@@ -150,19 +119,21 @@ export function makeFloor(runSeed, depth, greedStacks) {
   for (let i = 0; i < count; i++) {
     const t = spacedTile();
     if (!t) break;
-    const type = pickWeighted(rng, Object.entries(band.weights));
+    const distFrac = Math.min(1, dist(t, heroStart) / maxDist);
+    const type = CREATURE_BY_TIER[targetTier(depth, distFrac, rng)];
     const base = B.monsters[type];
     const elite = depth >= B.elite.min_depth && chance(rng, B.elite.spawn_rate);
     const m = {
       id: i,
       type,
       elite,
-      hp: Math.round(base.hp * scale) * (elite ? B.elite.hp_mult : 1),
-      atk: Math.round(base.atk * scale) + (elite ? B.elite.atk_bonus : 0),
-      def: Math.round(base.def * scale),
-      xp: Math.round(base.xp * scale) * (elite ? B.elite.xp_mult : 1),
-      goldMin: Math.round(base.gold[0] * scale) * (elite ? B.elite.gold_mult : 1),
-      goldMax: Math.round(base.gold[1] * scale) * (elite ? B.elite.gold_mult : 1),
+      radius: base.radius,
+      hp: base.hp * (elite ? B.elite.hp_mult : 1),
+      atk: base.atk + (elite ? B.elite.atk_bonus : 0),
+      def: base.def,
+      xp: base.xp * (elite ? B.elite.xp_mult : 1),
+      goldMin: base.gold[0] * (elite ? B.elite.gold_mult : 1),
+      goldMax: base.gold[1] * (elite ? B.elite.gold_mult : 1),
       x: t.x,
       y: t.y,
       spawnX: t.x,
@@ -181,6 +152,7 @@ export function makeFloor(runSeed, depth, greedStacks) {
     boss: true,
     elite: false,
     emoji: bossDepthEmoji,
+    radius: 0, // stationary; combat starts when the hero walks up
     hp: B.boss.hp(depth),
     atk: B.boss.atk(depth),
     def: B.boss.def(depth),
@@ -195,32 +167,19 @@ export function makeFloor(runSeed, depth, greedStacks) {
   boss.maxHp = boss.hp;
   monsters.push(boss);
 
-  // Chest PRESENCE only — contents never roll in the sim (login reveal).
-  // Gilded tier requires carrying enough greed stacks (risk-gated quality).
-  const chests = [];
-  for (const tier of ['common', 'rare', 'gilded']) {
-    if (tier === 'gilded' && greedStacks < B.shrines.gilded_min_stacks) continue;
-    if (chance(rng, B.chests.drop_chance[tier])) {
-      const t = takeTile(0);
-      if (t) chests.push({ tier, x: t.x, y: t.y });
-    }
-  }
-
-  // Loose gold piles.
-  const piles = [];
-  const nPiles = randInt(rng, B.floors.gold_piles[0], B.floors.gold_piles[1]);
-  for (let i = 0; i < nPiles; i++) {
+  // Scenery finds (rogule.com: items hidden under a rock or a plant) — an
+  // instant, small, no-decision reward for walking over them, complementing
+  // the boss chests rather than competing with them.
+  const finds = [];
+  const nFinds = randInt(rng, B.pickups.per_floor[0], B.pickups.per_floor[1]);
+  for (let i = 0; i < nFinds; i++) {
     const t = takeTile(0);
-    if (t) {
-      piles.push({
-        amount: randInt(rng, B.floors.gold_per_pile[0], B.floors.gold_per_pile[1]),
-        x: t.x,
-        y: t.y,
-      });
-    }
+    if (!t) break;
+    const kind = pickWeighted(rng, B.pickups.types.map((p) => [p, p.weight]));
+    finds.push({ emoji: kind.emoji, value: kind.value, x: t.x, y: t.y });
   }
 
-  return { w, h, depth, passable, heroStart, stairs, monsters, chests, piles };
+  return { w, h, depth, passable, heroStart, stairs, monsters, finds };
 }
 
 // BFS pathfinding, 4-directional. `blocked` is an extra Set of "x,y" tiles to

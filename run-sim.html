@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Roguidle — P0 sim</title>
+<title>Roguidle — sim console</title>
 <style>
   :root { color-scheme: dark; }
   body {
@@ -40,12 +40,13 @@
 </style>
 </head>
 <body>
-<h1>🕳️ Roguidle — P0 headless simulator</h1>
+<h1>🕳️ Roguidle — sim console</h1>
+<p style="opacity:.6;max-width:60ch">Dev tool, not part of the play flow. Runs the same tick() the game uses,
+headless, for a chronicle you can read in one screen or a 1,000-run batch for spotting broken floors.</p>
 
 <div class="controls">
   <label>Seed <input id="seed" type="number" value="12345"></label>
-  <label>Auto-bank every <input id="autobank" type="number" value="1" min="1" style="width:60px"> shrines</label>
-  <button id="runBtn">Run chronicles</button>
+  <button id="runBtn">Run one chronicle</button>
   <button id="batchBtn">Run 1,000-run batch</button>
   <span id="progress"></span>
 </div>
@@ -57,22 +58,18 @@
 import { initRun, tick } from './src/sim/tick.js';
 import { makeRng, hashSeeds } from './src/sim/rng.js';
 
-const DOCTRINES = [
-  { id: 'greedy',   label: '🤑 Greedy' },
-  { id: 'swift',    label: '🏃 Swift' },
-  { id: 'cautious', label: '🛡️ Cautious' },
-];
-const MON = { rat: '🐀', bat: '🦇', spider: '🕷️', wolf: '🐺' };
-const CHEST = { common: '📦', rare: '🎁', gilded: '🏆' };
+const MON = {
+  rat: '🐀', bat: '🦇', spider: '🕷️', ghost: '👻', boar: '🐗', wolf: '🐺',
+  ogre: '🧌', zombie: '🧟', vampire: '🧛', genie: '🧞', trex: '🦖', dragon: '🐉',
+};
 
-function runOnce(seed, doctrine, autoBank) {
-  const orders = { doctrine, autoBankEvery: autoBank };
+function runOnce(seed) {
   const state = initRun(seed);
   const rng = makeRng(hashSeeds(seed, 0xc0ffee)); // combat/loot stream
   const events = [];
   let guard = 0;
   while (!state.ended && guard++ < 200000) {
-    const out = tick(state, orders, rng);
+    const out = tick(state, null, rng);
     for (const e of out.events) events.push(e);
   }
   if (!state.ended) state.endReason = 'guard'; // should never happen
@@ -80,7 +77,7 @@ function runOnce(seed, doctrine, autoBank) {
 }
 
 function monsterSummary(byType, elites) {
-  const parts = Object.entries(byType).map(([t, n]) => MON[t] + (n > 1 ? '×' + n : ''));
+  const parts = Object.entries(byType).map(([t, n]) => (MON[t] || t) + (n > 1 ? '×' + n : ''));
   if (elites) parts.push('💢×' + elites);
   return parts.join(' ') || 'empty';
 }
@@ -92,29 +89,14 @@ function chronicleLines(events) {
       case 'floor_entered':
         out.push({ cls: 'floorline', text: `🌀 Floor ${e.depth} — ${monsterSummary(e.monsters, e.elites)}` });
         break;
-      case 'shrine_reached':
-        out.push({ text: `⛩️ a shrine hums at the entrance of floor ${e.depth}` });
-        break;
-      case 'doctrine_switched':
-        out.push({ text: `🔄 doctrine changed at the shrine: ${e.from} → ${e.to}` });
-        break;
-      case 'depth_renown':
-        out.push({ text: `🏅 first descent past floor ${e.floor} — ${e.amount} Renown, banked on the spot` });
-        break;
-      case 'pushed_on':
-        out.push({ text: `🔥 pushed on past the shrine — greed ×${(1 + 0.25 * e.stacks).toFixed(2)}` });
-        break;
-      case 'banked':
-        out.push({ text: `🏦 banked ${e.gold}🪙${e.chests ? ' + ' + e.chests + ' chest(s)' : ''} at ×${e.mult.toFixed(2)} → ${e.value} value` });
-        break;
       case 'monster_killed':
-        out.push({ text: `⚔️ ${e.elite ? '💢 elite ' : ''}${MON[e.monster]} ${e.monster} slain (+${e.xp}xp${e.gold ? ', +' + e.gold + '🪙' : ''})` });
+        out.push({ text: `⚔️ ${e.elite ? '💢 elite ' : ''}${MON[e.monster] || e.monster} slain (+${e.xp}xp${e.gold ? ', +' + e.gold + '🪙' : ''})` });
         break;
-      case 'chest_found':
-        out.push({ text: `${CHEST[e.tier]} hoisted a ${e.tier} chest onto the pack (unopened)` });
+      case 'boss_killed':
+        out.push({ text: `👑 ${e.emoji} boss falls (+${e.gold}🪙, chest dropped)` });
         break;
       case 'gold_found':
-        out.push({ text: `🪙 scooped up ${e.amount} gold` });
+        out.push({ text: `${e.emoji || '🪙'} found ${e.amount} gold` });
         break;
       case 'rested':
         out.push({ text: `💤 rested ${e.from}→${e.to} hp` });
@@ -123,13 +105,10 @@ function chronicleLines(events) {
         out.push({ text: `⬆️ level ${e.level}! (max hp ${e.maxHp})` });
         break;
       case 'hero_died':
-        out.push({ cls: 'fate', text: `💀 slain by ${e.elite ? 'an elite ' : ''}${MON[e.killer]} ${e.killer} on floor ${e.depth} — ${e.lostGold}🪙${e.lostChests ? ', ' + e.lostChests + ' chest(s)' : ''} and ${e.stacks} greed stack(s) lost to the dark` });
+        out.push({ cls: 'fate', text: `💀 slain by ${e.elite ? 'an elite ' : ''}${MON[e.killer] || e.killer} on floor ${e.depth} — ${e.lostGold}🪙 lost` });
         break;
       case 'out_of_rations':
-        out.push({ cls: 'fate', text: `⛺ the larder is empty — the hero camps below floor ${e.depth}` });
-        break;
-      case 'made_camp':
-        out.push({ cls: 'fate', text: `⛺ the odds ahead read ${e.forecast}% — the hero banks everything and makes camp on floor ${e.depth}, alive` });
+        out.push({ cls: 'fate', text: `⛺ the larder is empty — making camp` });
         break;
       case 'stalled':
         out.push({ text: `🕳️ wandered too long — heads straight for the stairs` });
@@ -141,37 +120,27 @@ function chronicleLines(events) {
 
 function summaryHtml(state) {
   const s = state.stats;
-  const FATE = {
-    died: `💀 died on floor ${state.depth}`,
-    stopped: `⛺ stopped at the shrine on floor ${state.depth}, alive`,
-    camped: `⛺ out of rations, floor ${state.depth}`,
-  };
-  const chestsBanked = state.banked.chests;
+  const fate = state.endReason === 'died' ? `💀 died on floor ${state.depth}` : state.endReason;
   const kills = `${s.kills}${s.eliteKills ? ' (' + s.eliteKills + ' elite)' : ''}`;
   return `
-    <b>${FATE[state.endReason] || state.endReason}</b><br>
-    🏅 <b>${Math.round(state.renown)} Renown</b> (${Math.round(state.banked.value)} banked + ${s.depthRenown} depth)<br>
-    depth ${s.maxDepth} · level ${state.hero.level} · ⚔️ ${kills} kills · ⛩️ ${s.shrinesSeen} shrines<br>
-    🏦 ${state.banked.gold}🪙 banked${chestsBanked ? ', ' + chestsBanked + ' chests' : ''}<br>
+    <b>${fate}</b><br>
+    depth ${s.maxDepth} · level ${state.hero.level} · ⚔️ ${kills} kills · 👑 ${s.bossKills} bosses<br>
     🪙 ${s.goldCollected} collected · ${state.endReason === 'died' ? state.carried.gold + '🪙 lost' : state.carried.gold + '🪙 still carried'}<br>
     ${state.t} ticks (${s.restTicks} resting) · rations left: ${state.hero.rations}`;
 }
 
 function renderChronicles() {
   const seed = Number(document.getElementById('seed').value) >>> 0;
-  const autoBank = Math.max(1, Number(document.getElementById('autobank').value) | 0);
   const cols = document.getElementById('cols');
   cols.innerHTML = '';
-  for (const d of DOCTRINES) {
-    const { state, events } = runOnce(seed, d.id, autoBank);
-    const col = document.createElement('div');
-    col.className = 'col';
-    const log = chronicleLines(events)
-      .map((l) => `<div class="${l.cls || ''}">${l.text}</div>`)
-      .join('');
-    col.innerHTML = `<h2>${d.label}</h2><div class="summary">${summaryHtml(state)}</div><div class="log">${log}</div>`;
-    cols.appendChild(col);
-  }
+  const { state, events } = runOnce(seed);
+  const col = document.createElement('div');
+  col.className = 'col';
+  const log = chronicleLines(events)
+    .map((l) => `<div class="${l.cls || ''}">${l.text}</div>`)
+    .join('');
+  col.innerHTML = `<h2>seed ${seed}</h2><div class="summary">${summaryHtml(state)}</div><div class="log">${log}</div>`;
+  cols.appendChild(col);
 }
 
 // ---- batch mode: the P0 balance testbed -----------------------------------
@@ -194,102 +163,57 @@ const median = (a) => {
 
 async function runBatch() {
   const baseSeed = Number(document.getElementById('seed').value) >>> 0;
-  const autoBank = Math.max(1, Number(document.getElementById('autobank').value) | 0);
   const N = 1000;
   const progress = document.getElementById('progress');
-  const results = {};
+  const rows = [];
   const t0 = performance.now();
 
-  for (const d of DOCTRINES) {
-    const rows = [];
-    for (let i = 0; i < N; i++) {
-      const { state } = runOnce(hashSeeds(baseSeed, i), d.id, autoBank);
-      rows.push({
-        died: state.endReason === 'died',
-        deathFloor: state.endReason === 'died' ? state.depth : null,
-        depth: state.stats.maxDepth,
-        kills: state.stats.kills,
-        gold: state.stats.goldCollected,
-        bankedValue: state.banked.value,
-        renown: state.renown,
-        shrines: state.stats.shrinesSeen,
-        ticks: state.t,
-      });
-      if (i % 50 === 49) {
-        progress.textContent = `${d.label} ${i + 1}/${N}…`;
-        await yieldToUi();
-      }
+  for (let i = 0; i < N; i++) {
+    const { state } = runOnce(hashSeeds(baseSeed, i));
+    rows.push({
+      died: state.endReason === 'died',
+      deathFloor: state.endReason === 'died' ? state.depth : null,
+      depth: state.stats.maxDepth,
+      kills: state.stats.kills,
+      bossKills: state.stats.bossKills,
+      gold: state.stats.goldCollected,
+      ticks: state.t,
+    });
+    if (i % 50 === 49) {
+      progress.textContent = `${i + 1}/${N}…`;
+      await yieldToUi();
     }
-    results[d.id] = rows;
   }
   const secs = ((performance.now() - t0) / 1000).toFixed(1);
   progress.textContent = `batch done in ${secs}s`;
-  renderBatch(results, N);
+  renderBatch(rows, N);
 }
 
-function renderBatch(results, N) {
-  const rows = [];
-  for (const d of DOCTRINES) {
-    const r = results[d.id];
-    const deaths = r.filter((x) => x.died);
-    rows.push({
-      label: d.label,
-      id: d.id,
-      diedPct: (100 * deaths.length) / N,
-      medDeathFloor: median(deaths.map((x) => x.deathFloor)),
-      avgDepth: mean(r.map((x) => x.depth)),
-      medDepth: median(r.map((x) => x.depth)),
-      avgKills: mean(r.map((x) => x.kills)),
-      avgGold: mean(r.map((x) => x.gold)),
-      avgBanked: mean(r.map((x) => x.bankedValue)),
-      medRenown: median(r.map((x) => x.renown)),
-      avgRenown: mean(r.map((x) => x.renown)),
-      medShrines: median(r.map((x) => x.shrines)),
-      avgTicks: mean(r.map((x) => x.ticks)),
-    });
-  }
-  const g = rows.find((r) => r.id === 'greedy');
-  const s = rows.find((r) => r.id === 'swift');
-  const c = rows.find((r) => r.id === 'cautious');
+function renderBatch(rows, N) {
+  const deaths = rows.filter((x) => x.died);
+  const stats = {
+    diedPct: (100 * deaths.length) / N,
+    medDeathFloor: median(deaths.map((x) => x.deathFloor)),
+    avgDepth: mean(rows.map((x) => x.depth)),
+    medDepth: median(rows.map((x) => x.depth)),
+    avgKills: mean(rows.map((x) => x.kills)),
+    avgBossKills: mean(rows.map((x) => x.bossKills)),
+    avgGold: mean(rows.map((x) => x.gold)),
+    avgTicks: mean(rows.map((x) => x.ticks)),
+  };
 
   const fmt = (x, d = 1) => x.toFixed(d);
-  let html = `<h2>Batch: ${N} runs per doctrine</h2><table>
-    <tr><th>doctrine</th><th>died %</th><th>median death floor</th><th>avg depth</th><th>median depth</th><th>median Renown</th><th>avg Renown</th><th>median shrines</th><th>avg kills</th><th>avg gold</th><th>avg banked</th><th>avg ticks</th></tr>`;
-  for (const r of rows) {
-    html += `<tr><td>${r.label}</td><td>${fmt(r.diedPct)}%</td><td>${r.medDeathFloor || '—'}</td><td>${fmt(r.avgDepth)}</td><td>${r.medDepth}</td><td><b>${fmt(r.medRenown, 0)}</b></td><td>${fmt(r.avgRenown, 0)}</td><td>${r.medShrines}</td><td>${fmt(r.avgKills)}</td><td>${fmt(r.avgGold)}</td><td>${fmt(r.avgBanked)}</td><td>${fmt(r.avgTicks, 0)}</td></tr>`;
-  }
-  html += `</table>`;
+  let html = `<h2>Batch: ${N} runs, seed ${document.getElementById('seed').value}</h2><table>
+    <tr><th>died %</th><th>median death floor</th><th>avg depth</th><th>median depth</th><th>avg kills</th><th>avg bosses</th><th>avg gold</th><th>avg ticks</th></tr>
+    <tr><td>${fmt(stats.diedPct)}%</td><td>${stats.medDeathFloor || '—'}</td><td>${fmt(stats.avgDepth)}</td><td>${stats.medDepth}</td><td>${fmt(stats.avgKills)}</td><td>${fmt(stats.avgBossKills)}</td><td>${fmt(stats.avgGold)}</td><td>${fmt(stats.avgTicks, 0)}</td></tr>
+  </table>`;
 
-  // Tuning-target checks from docs/balance.md
-  const swiftRatio = s.avgDepth / g.avgDepth;
-  const greedKillRatio = g.avgKills / s.avgKills;
-  const greedGoldRatio = g.avgGold / s.avgGold;
-  const bestRenown = Math.max(...rows.map((r) => r.medRenown));
-  const worstRenown = Math.min(...rows.map((r) => r.medRenown));
-  const renownParity = bestRenown ? worstRenown / bestRenown : 0;
-  const minShrines = Math.min(...rows.map((r) => r.medShrines));
-  const mark = (ok) => (ok ? '✅' : '⚠️');
-  html += `<div class="check">
-    ${mark(rows.every((r) => r.medDeathFloor === 0 || (r.medDeathFloor >= 6 && r.medDeathFloor <= 12)))}
-      First-death target (floors 6–12): greedy ${g.medDeathFloor || '—'}, swift ${s.medDeathFloor || '—'}, cautious ${c.medDeathFloor || '—'}<br>
-    ${mark(swiftRatio >= 1.2 && swiftRatio <= 1.5)} Swift depth vs Greedy: ×${fmt(swiftRatio, 2)} (target ~×1.3 per ration)<br>
-    ${mark(greedKillRatio >= 1.35)} Greedy kills vs Swift: ×${fmt(greedKillRatio, 2)} · gold ×${fmt(greedGoldRatio, 2)} (target ~×1.5)<br>
-    ${mark(c.diedPct < 10)} Cautious deaths: ${fmt(c.diedPct)}% (target under 10%)<br>
-    ${mark(renownParity >= 0.6)} Renown parity: worst median is ${fmt(100 * renownParity, 0)}% of best (target ≥60%) — ${rows.map((r) => r.label.slice(2) + ' ' + fmt(r.medRenown, 0)).join(', ')}<br>
-    ${mark(minShrines >= 2)} Live bank-or-push decisions: median shrines reached ${rows.map((r) => r.label.slice(2) + ' ' + r.medShrines).join(', ')} (target ≥2 each)
-  </div>`;
-
-  // Death-floor histograms
-  for (const d of DOCTRINES) {
-    const deaths = results[d.id].filter((x) => x.died).map((x) => x.deathFloor);
-    if (!deaths.length) {
-      html += `<div class="hist"><b>${d.label}</b>: no deaths\n</div>`;
-      continue;
-    }
-    const maxF = Math.max(...deaths);
-    let hist = `<b>${d.label}</b> death floors\n`;
+  const deathFloors = deaths.map((x) => x.deathFloor);
+  if (deathFloors.length) {
+    const maxF = Math.max(...deathFloors);
+    let hist = 'death floors\n';
     for (let f = 1; f <= maxF; f++) {
-      const n = deaths.filter((x) => x === f).length;
+      const n = deathFloors.filter((x) => x === f).length;
       if (!n && f > 15) continue;
       hist += String(f).padStart(3) + ' ' + '█'.repeat(Math.max(1, Math.round(n / 4))) + ' ' + n + '\n';
     }
